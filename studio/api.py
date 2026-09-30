@@ -10,6 +10,7 @@ from typing import Literal
 from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
@@ -120,6 +121,13 @@ def create_app(config: Settings = settings) -> FastAPI:
     @app.exception_handler(HTTPException)
     async def known_error(request, exc):
         return JSONResponse({"error": exc.detail}, status_code=exc.status_code, headers=exc.headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(request, exc):
+        issue = exc.errors()[0]
+        field = ".".join(str(part) for part in issue["loc"] if part != "body")
+        message = f"{field}: {issue['msg']}" if field else issue["msg"]
+        return JSONResponse({"error": f"Invalid request. {message}"}, status_code=422)
 
     @app.get("/api/health")
     async def health():

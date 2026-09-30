@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Columns2, Code2, Eye, Image, Laptop, Layers2, Smartphone, Tablet } from 'lucide-react';
 import type { Project } from '../types';
 import { localDocument } from '../sample';
+import { Tabs } from './Tabs';
 
 export type View = 'preview' | 'source' | 'compare' | 'code';
 export type Device = 'desktop' | 'tablet' | 'mobile';
@@ -55,13 +56,10 @@ export function Canvas(props: Props) {
   const empty = !project.code.html.trim();
   return <section className="canvas-panel" aria-label="Interface workspace">
     <div className="canvas-toolbar">
-      <div className="canvas-tabs" role="tablist" aria-label="Workspace view">
-        {([{ id: 'preview', label: 'Preview', icon: Eye }, { id: 'source', label: 'Source', icon: Image },
+      <Tabs value={view} onChange={onView} label="Workspace view" className="canvas-tabs" panelId="workspace-content"
+        items={([{ id: 'preview', label: 'Preview', icon: Eye }, { id: 'source', label: 'Source', icon: Image },
           { id: 'compare', label: 'Compare', icon: Columns2 }, { id: 'code', label: 'Code', icon: Code2 }] as const)
-          .map(item => <button key={item.id} role="tab" aria-selected={view === item.id} aria-controls="workspace-content"
-            className={view === item.id ? 'active' : ''} onClick={() => onView(item.id)}>
-            <item.icon size={15} /><span>{item.label}</span></button>)}
-      </div>
+          .map(item => ({ value: item.id, name: item.label, label: <><item.icon size={15} /><span>{item.label}</span></> }))} />
       <div className="device-switch" aria-label="Preview width">
         {([{ id: 'desktop', icon: Laptop, label: 'Desktop' }, { id: 'tablet', icon: Tablet, label: 'Tablet' },
           { id: 'mobile', icon: Smartphone, label: 'Mobile' }] as const).map(item =>
@@ -70,7 +68,7 @@ export function Canvas(props: Props) {
             <item.icon size={17} /></button>)}
       </div>
     </div>
-    <div id="workspace-content" role="tabpanel" className={`canvas-content ${view === 'code' ? 'code-mode' : ''}`}>
+    <div id="workspace-content" role="tabpanel" aria-label={`${view} workspace`} className={`canvas-content ${view === 'code' ? 'code-mode' : ''}`}>
       {view === 'code' ? props.children : <>
         <div className="canvas-meta"><span><span className="status-dot" />{project.sample ? 'EDITABLE EXAMPLE' : view === 'source' ? 'SOURCE IMAGE' : 'LIVE WORKSPACE'}</span>
           <span>{widths[device]} PX <span className="meta-separator">/</span> {device.toUpperCase()}</span></div>

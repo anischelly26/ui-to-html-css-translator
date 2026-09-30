@@ -101,13 +101,17 @@ export function useWorkspace(notify: (message: string) => void) {
     }
     await forgetProject(item.id);
     setSaved(items => items.filter(value => value.id !== item.id));
-    if (current.current.id === item.id) setSaveStatus('Saved copy removed · edit to save again');
+    if (current.current.id === item.id && !dirty.current) setSaveStatus('Saved copy removed · edit to save again');
   }
 
   async function recover(item: Project) {
-    await saveProject(item);
-    remember(item);
-    if (current.current.id === item.id && !dirty.current) setSaveStatus('Saved on this device');
+    const recovered = current.current.id === item.id ? current.current : item;
+    await saveProject(recovered);
+    remember(recovered);
+    if (current.current === recovered) {
+      dirty.current = false;
+      setSaveStatus('Saved on this device');
+    }
   }
 
   return { project, saved, saveStatus, canUndo: history.length > 0, update, open, undo, remove, recover };

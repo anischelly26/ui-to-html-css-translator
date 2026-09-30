@@ -27,7 +27,7 @@ export function Inspector({ project, selected, onSelect, onApply, busy }: { proj
     </div>
     {draft ? <div className="element-properties">
       <div className="section-heading"><span>SELECTED ELEMENT</span><span className="selected-dot" /></div>
-      <label className="field-label">Content<textarea value={draft.text} disabled={busy} onChange={event => setDraft({ ...draft, text: event.target.value })} rows={3} maxLength={3000} /></label>
+      <label className="field-label">Content<textarea aria-label="Element content" value={draft.text} disabled={busy} onChange={event => setDraft({ ...draft, text: event.target.value })} rows={3} maxLength={3000} /></label>
       <label className="field-label">Component type<select value={draft.kind} disabled={busy} onChange={event => setDraft({ ...draft, kind: event.target.value as Kind })}>
         <option value="text">Text</option><option value="heading">Heading</option><option value="button">Button</option><option value="input">Input</option><option value="container">Container</option>
       </select></label>

@@ -211,8 +211,8 @@ select option { color: var(--ink); background: var(--paper); }
 .editor-actions { display: flex; gap: 8px; }
 .editor-actions button { display: flex; padding: 4px; border: 0; background: none; color: #8b998e; }
 .editor-actions button:hover { color: #d9e3d4; }
-.editor-body { height: 390px; display: flex; overflow: auto; background: #151a19; }
-.line-numbers { padding: 18px 12px 18px 15px; font: 11px/1.9 var(--mono); text-align: right; color: #58655b; user-select: none; }
+.editor-body { height: 390px; display: flex; overflow: hidden; background: #151a19; }
+.line-numbers { flex-shrink: 0; overflow: hidden; padding: 18px 12px 18px 15px; font: 11px/1.9 var(--mono); text-align: right; color: #859487; user-select: none; }
 .editor textarea { min-width: 0; width: 100%; background: transparent; color: #c4d8bb; border: 0; resize: none; padding: 18px 15px 18px 0; font: 11px/1.9 var(--mono); tab-size: 2; outline-offset: -3px; }
 .editor-footer { display: flex; justify-content: space-between; padding: 10px 16px; border-top: 1px solid #2e3631; font-size: 9px; color: #8b998e; }
 .editor-footer span span { padding: 0 4px; }
@@ -287,3 +287,20 @@ kbd { font-family: var(--mono); }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; } }
 
 .backup-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+
+/* Keep secondary labels readable at every viewport, including the mobile canvas. */
+.brand-beta, .sample-badge, .canvas-meta, .canvas-bottom, .surface-label,
+.engine-choice label > span, .metric-row small, .mini-label, .layers-heading,
+.element-name > span, .sample-layer, .section-heading, .section-heading span + span,
+.palette code, .main-footer, .editor-footer { font-size: 10px; }
+@media (max-width: 800px) {
+  .sidebar { visibility: hidden; }
+  .menu-open .sidebar { visibility: visible; }
+}
+@media (max-width: 500px) {
+  .eyebrow { font-size: 10px; letter-spacing: 1px; }
+  .workflow-strip > span { font-size: 10px; line-height: 1.5; }
+  .canvas-meta { font-size: 9px; letter-spacing: .7px; }
+  .field-label textarea, .field-label select, .field-label input:not([type='color']),
+  .project-title input, .search-field input { font-size: 16px; }
+}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, CircleAlert, Command,
   FileImage, FolderOpen, Grid2X2, ImagePlus, Loader2, Menu, Moon, Plus, Settings2, ShieldCheck, Sparkles,
   Sun, Trash2, Undo2, Upload, X, Zap } from 'lucide-react';
@@ -108,20 +108,23 @@ export default function App() {
     finally { endOperation(); }
   }
 
-  useEffect(() => {
-    const paste = (event: ClipboardEvent) => {
+  const paste = useEffectEvent((event: ClipboardEvent) => {
       const image = [...(event.clipboardData?.items ?? [])].find(item => item.type.startsWith('image/'))?.getAsFile();
       if (image && !dialog && !busy) { event.preventDefault(); void upload(image); }
-    };
-    const keys = (event: KeyboardEvent) => {
+  });
+  const keys = useEffectEvent((event: KeyboardEvent) => {
+      if (event.key === 'Escape' && mobileMenu) { setMobileMenu(false); return; }
       const tag = (event.target as HTMLElement)?.tagName;
       if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || dialog) return;
       if (event.key === '/') { event.preventDefault(); document.querySelector<HTMLInputElement>('[aria-label="Search detected elements"]')?.focus(); }
       if ((event.ctrlKey || event.metaKey) && event.key === 'o') { event.preventDefault(); fileInput.current?.click(); }
-    };
-    document.addEventListener('paste', paste); document.addEventListener('keydown', keys);
-    return () => { document.removeEventListener('paste', paste); document.removeEventListener('keydown', keys); };
   });
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => paste(event);
+    const onKey = (event: KeyboardEvent) => keys(event);
+    document.addEventListener('paste', onPaste); document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('paste', onPaste); document.removeEventListener('keydown', onKey); };
+  }, []);
 
   async function generate() {
     if (!project.source || !beginOperation()) return;
@@ -248,7 +251,7 @@ export default function App() {
 
         <section className="project-bar" aria-label="Current workspace"><div className="project-title"><span className="project-file-icon"><FileImage size={19} /></span><div><input aria-label="Workspace name" value={project.name} maxLength={80} disabled={busy}
           onChange={event => workspace.update(value => ({ ...value, name: event.target.value }))}
-          onBlur={() => { if (!project.name.trim()) workspace.update(value => ({ ...value, name: workspaceName(value.name) })); }} /><span><span className="save-dot" />{saveStatus}{project.sample ? <span className="sample-badge">SAMPLE</span> : null}</span></div></div>
+          onBlur={() => { if (!project.name.trim()) workspace.update(value => ({ ...value, name: workspaceName(value.name) })); }} /><span><span className="save-dot" /><span role="status" aria-live="polite">{saveStatus}</span>{project.sample ? <span className="sample-badge">SAMPLE</span> : null}</span></div></div>
           <div className="project-actions"><button className="icon-button" aria-label="Undo last reconstruction change" disabled={!workspace.canUndo || busy} onClick={() => { workspace.undo(); notify('Previous reconstruction and elements restored.'); }} title="Undo"><Undo2 size={17} /></button>
             <button className="button subtle" disabled={!project.code.html || exporting || busy} onClick={() => void exportCode()}>{exporting ? <Loader2 className="spinning" size={15} /> : <ArrowDownToLine size={15} />}Export code</button></div></section>
 

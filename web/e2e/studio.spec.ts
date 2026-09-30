@@ -16,6 +16,11 @@ async function connect(page: Page) {
 
 test('editing, saving, reload, removal and recovery preserve the workspace', async ({ page }) => {
   await connect(page);
+  await page.getByRole('tab', { name: 'Preview', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Source', exact: true })).toBeFocused();
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Code', exact: true })).toHaveAttribute('aria-selected', 'true');
   await page.getByRole('tab', { name: 'Code', exact: true }).click();
   await page.getByLabel('HTML code editor').fill('<main><h1>My saved interface</h1></main>');
   await expect(page.getByText('Saved on this device', { exact: true })).toBeVisible();
@@ -60,12 +65,12 @@ test('real screenshot → OCR → correction → undo → ZIP works at desktop a
   await expect(page.getByRole('tab', { name: 'Compare', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: 30_000 });
   await page.getByLabel('Search detected elements').fill('Hello FORM');
   await page.locator('.element-row').filter({ hasText: 'Hello FORM' }).click();
-  await page.getByLabel('Content', { exact: true }).fill('A corrected heading');
+  await page.getByRole('textbox', { name: 'Element content', exact: true }).fill('A corrected heading');
   await page.getByRole('button', { name: 'Apply correction' }).click();
   await page.getByRole('tab', { name: 'Code', exact: true }).click();
   await expect(page.getByLabel('HTML code editor')).toHaveValue(/A corrected heading/);
   await page.getByRole('button', { name: 'Undo last reconstruction change' }).click();
-  await expect(page.getByLabel('Content', { exact: true })).toHaveValue('Hello FORM');
+  await expect(page.getByRole('textbox', { name: 'Element content', exact: true })).toHaveValue('Hello FORM');
   await expect(page.getByLabel('HTML code editor')).not.toHaveValue(/A corrected heading/);
   await page.getByRole('tab', { name: 'Preview', exact: true }).click();
   await expect(page.frameLocator('iframe[title="Reconstructed interface preview"]').getByText('Hello FORM', { exact: true })).toBeVisible();

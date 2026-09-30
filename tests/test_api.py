@@ -39,6 +39,22 @@ def test_dns_rebinding_is_rejected():
         assert client.get("/api/jobs/missing").status_code == 403
 
 
+def test_request_validation_returns_actionable_errors_without_echoing_input():
+    with TestClient(create_app(replace(Settings(), api_key=""))) as client:
+        response = client.post(
+            "/api/export", json={"code": {"html": "private uploaded content", "css": ""}, "name": ""}
+        )
+        assert response.status_code == 422
+        assert "name" in response.json()["error"]
+        assert "private uploaded content" not in response.text
+
+
+def test_non_ascii_key_header_is_rejected_without_a_server_error():
+    with TestClient(create_app(replace(Settings(), api_key="test-key"))) as client:
+        response = client.get("/api/engines", headers={"X-Form-Key": b"\xff"})
+        assert response.status_code == 401
+
+
 def test_api_workflow_with_real_ocr(screenshot):
     with TestClient(create_app(replace(Settings(), api_key=""))) as client:
         submitted = client.post("/api/jobs?engine=local", content=screenshot)
