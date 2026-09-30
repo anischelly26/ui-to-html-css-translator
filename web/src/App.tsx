@@ -6,6 +6,7 @@ import { api, download, setAccessKey, wait } from './api';
 import { Canvas } from './components/Canvas';
 import type { Device, View } from './components/Canvas';
 import { Dialog } from './components/Dialog';
+import { DemoInfo, DemoNotice } from './components/DemoNotice';
 import { Editor } from './components/Editor';
 import { Inspector } from './components/Inspector';
 import { sampleProject } from './sample';
@@ -13,6 +14,7 @@ import { useWorkspace } from './hooks/useWorkspace';
 import { usePreview } from './hooks/usePreview';
 import { isProject, workspaceName } from './workspace';
 import type { Code, Element, Engine, Engines, Health, Job, Project } from './types';
+import { IS_DEMO, SOURCE_URL } from './config';
 
 const stages = ['queued', 'preparing', 'detecting', 'generating', 'reviewing'];
 const stageLabels: Record<string, string> = { queued: 'Waiting for a processing slot', preparing: 'Preparing your screenshot',
@@ -55,6 +57,7 @@ export default function App() {
   function endOperation() { operation.current = false; setBusy(false); }
 
   const connect = useCallback(async () => {
+    if (IS_DEMO) return false;
     const revision = ++connectionRevision.current;
     const results = await Promise.allSettled([api.health(), api.engines()]);
     if (revision !== connectionRevision.current) return false;
@@ -103,7 +106,7 @@ export default function App() {
         result: { code, elements: [], image: { width: canvas.width, height: canvas.height, background: '#ffffff' },
           engine: 'local', duration_ms: 0, warnings: [], palette: [] } }, true);
       setSelected(null); setError(''); setView('source'); setDialog(null); setMobileMenu(false);
-      notify('Screenshot ready. Choose an engine and generate your interface.');
+      notify(IS_DEMO ? 'Screenshot saved in this browser. OCR processing requires the full Python studio.' : 'Screenshot ready. Choose an engine and generate your interface.');
     } catch (error) { setError(error instanceof Error ? error.message : 'This image could not be opened.'); }
     finally { endOperation(); }
   }
@@ -180,6 +183,11 @@ export default function App() {
   }
 
   async function exportCode() {
+    if (IS_DEMO) {
+      download(new Blob([preview.document], { type: 'text/html;charset=utf-8' }), 'form-preview.html');
+      notify('Protected HTML preview downloaded. Use the full studio for HTML/CSS ZIP export.');
+      return;
+    }
     setExporting(true); setError('');
     try { download(await api.export(project.code, workspaceName(project.name)), 'form-interface.zip'); notify('Your HTML and CSS export is ready.'); }
     catch (error) { setError(error instanceof Error ? error.message : 'Export failed. Check the server connection.'); }
@@ -236,16 +244,17 @@ export default function App() {
       <div className="recent-projects">{saved.length ? saved.slice(0, 4).map(item => <button className={item.id === project.id ? 'current' : ''} key={item.id} onClick={() => openProject(item)}><FileImage size={14} /><span>{item.name}</span></button>)
         : <button className="current" onClick={() => openProject(sampleProject())}><FileImage size={14} /><span>Orbit — sample workspace</span></button>}</div>
       <div className="sidebar-spacer" />
-      <div className="sidebar-callout"><span className="callout-icon"><Sparkles size={17} /></span><h3>From pixels<br />to possibilities.</h3><p>Give your next idea<br />a head start.</p><button onClick={() => fileInput.current?.click()}>Start from a screenshot<ArrowRight size={15} /></button></div>
-      <button className="connection" onClick={() => setDialog('settings')}><span className={`status-dot ${health ? '' : 'offline'}`} /><span>{health ? 'Processing server connected' : 'Explore offline'}</span><Settings2 size={14} /></button>
+      <div className="sidebar-callout"><span className="callout-icon"><Sparkles size={17} /></span><h3>From pixels<br />to possibilities.</h3><p>Give your next idea<br />a head start.</p><button onClick={() => { if (IS_DEMO) { setView('code'); setMobileMenu(false); } else fileInput.current?.click(); }}>{IS_DEMO ? 'Make the example yours' : 'Start from a screenshot'}<ArrowRight size={15} /></button></div>
+      <button className="connection" onClick={() => setDialog('settings')}><span className={`status-dot ${health || IS_DEMO ? '' : 'offline'}`} /><span>{IS_DEMO ? 'Browser demo · about processing' : health ? 'Processing server connected' : 'Explore offline'}</span><Settings2 size={14} /></button>
       <div className="sidebar-user"><span className="user-avatar">AC</span><div><strong>Anis Chelli</strong><span>Personal workspace</span></div><button aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} title="Change theme" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}</button></div>
     </aside>
 
     <main className="main" id="main-workspace">
       <header className="topbar"><div className="breadcrumb"><button className="menu-toggle" aria-label="Open navigation" onClick={() => setMobileMenu(true)}><Menu size={19} /></button><span>Workspace</span><ChevronRight size={13} /><strong>Design studio</strong></div>
-        <div className="topbar-right"><span className="local-pill"><ShieldCheck size={13} />Local-first</span><button className="icon-button" aria-label="Connection settings" onClick={() => setDialog('settings')}><Settings2 size={17} /></button></div></header>
+        <div className="topbar-right"><span className="local-pill"><ShieldCheck size={13} />{IS_DEMO ? 'Browser demo' : 'Local-first'}</span><button className="icon-button" aria-label={IS_DEMO ? 'Demo information' : 'Connection settings'} onClick={() => setDialog('settings')}><Settings2 size={17} /></button></div></header>
       <div className="main-content">
-        <section className="intro"><div><div className="eyebrow"><span />VISION TO CODE, WITHOUT THE GUESSWORK</div><h1>Make pixels programmable<span>.</span></h1><p>Your screenshot, transformed into a starting point you can actually build on.</p></div>
+        {IS_DEMO ? <DemoNotice onEdit={() => setView('code')} onExample={() => openProject({ ...sampleProject(), id: crypto.randomUUID() })} /> : null}
+        <section className="intro"><div><div className="eyebrow"><span />VISION TO CODE, WITHOUT THE GUESSWORK</div><h1>Make pixels programmable<span>.</span></h1><p>{IS_DEMO ? 'Explore the studio. Make the example your own. Keep your work in this browser.' : 'Your screenshot, transformed into a starting point you can actually build on.'}</p></div>
           <button className="button upload-button" onClick={() => fileInput.current?.click()} disabled={busy}><Plus size={17} />New screenshot</button></section>
         <div className="workflow-strip"><span><span className="step-bubble">1</span>Bring a screenshot</span><ChevronRight size={13} /><span><span className="step-bubble">2</span>Understand the structure</span><ChevronRight size={13} /><span><span className="step-bubble">3</span>Make it your own</span><span className="workflow-hint">Thoughtful tools. Better starting points.</span></div>
 
@@ -253,7 +262,7 @@ export default function App() {
           onChange={event => workspace.update(value => ({ ...value, name: event.target.value }))}
           onBlur={() => { if (!project.name.trim()) workspace.update(value => ({ ...value, name: workspaceName(value.name) })); }} /><span><span className="save-dot" /><span role="status" aria-live="polite">{saveStatus}</span>{project.sample ? <span className="sample-badge">SAMPLE</span> : null}</span></div></div>
           <div className="project-actions"><button className="icon-button" aria-label="Undo last reconstruction change" disabled={!workspace.canUndo || busy} onClick={() => { workspace.undo(); notify('Previous reconstruction and elements restored.'); }} title="Undo"><Undo2 size={17} /></button>
-            <button className="button subtle" disabled={!project.code.html || exporting || busy} onClick={() => void exportCode()}>{exporting ? <Loader2 className="spinning" size={15} /> : <ArrowDownToLine size={15} />}Export code</button></div></section>
+            <button className="button subtle" disabled={!project.code.html || exporting || busy} onClick={() => void exportCode()}>{exporting ? <Loader2 className="spinning" size={15} /> : <ArrowDownToLine size={15} />}{IS_DEMO ? 'Download HTML' : 'Export code'}</button></div></section>
 
         {error ? <div className="error-banner" role="alert"><CircleAlert size={18} /><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div> : null}
 
@@ -262,15 +271,17 @@ export default function App() {
             device={device} onDevice={setDevice} overlay={overlay} onOverlay={() => setOverlay(value => !value)}>
             <Editor code={project.code} disabled={busy} onChange={changeCode} onReset={() => { workspace.update(value => ({ ...value, code: { ...value.baseline } }), true); notify('Generated code restored.'); }} notify={notify} />
           </Canvas>
-          <div className="generation-bar"><div className="engine-choice"><span className="engine-icon"><Zap size={17} /></span><label><span>RECONSTRUCTION ENGINE</span><select aria-label="Reconstruction engine" value={engine} disabled={busy} onChange={event => setEngine(event.target.value as Engine)}><option value="local">Local vision + OCR</option><option value="ollama" disabled={!engines?.ollama}>{engines?.ollama ? `Vision model · ${engines.model}` : 'Vision model · connect Ollama'}</option></select></label></div>
+          {IS_DEMO ? <div className="generation-bar"><div className="engine-choice"><span className="engine-icon"><Zap size={17} /></span><div className="demo-engine"><span>SCREENSHOT PROCESSING</span><strong>Available in the full Python studio</strong></div></div>
+            <a className="button generate-button" href={`${SOURCE_URL}#quick-start`} target="_blank" rel="noopener noreferrer">Run full studio<ArrowUpRight size={16} /></a></div>
+          : <div className="generation-bar"><div className="engine-choice"><span className="engine-icon"><Zap size={17} /></span><label><span>RECONSTRUCTION ENGINE</span><select aria-label="Reconstruction engine" value={engine} disabled={busy} onChange={event => setEngine(event.target.value as Engine)}><option value="local">Local vision + OCR</option><option value="ollama" disabled={!engines?.ollama}>{engines?.ollama ? `Vision model · ${engines.model}` : 'Vision model · connect Ollama'}</option></select></label></div>
             {health && !engines ? <button className="button generate-button" onClick={() => setDialog('settings')}><Settings2 size={16} />Connect processing<ArrowRight size={16} /></button>
-              : <button className="button generate-button" disabled={!project.source || busy || !health || (engine === 'local' && !engines?.local)} onClick={() => void generate()}><Sparkles size={16} />Generate interface<ArrowUpRight size={16} /></button>}</div>
+              : <button className="button generate-button" disabled={!project.source || busy || !health || (engine === 'local' && !engines?.local)} onClick={() => void generate()}><Sparkles size={16} />Generate interface<ArrowUpRight size={16} /></button>}</div>}
           {job ? <div className="progress-panel" role="status" aria-live="polite"><div><Loader2 size={17} className="spinning" /><strong>{stageLabels[job.status] || 'Processing screenshot'}</strong><button onClick={cancel}>Cancel</button></div><div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div><div className="progress-stages">{['Prepare', 'Detect', 'Generate', 'Review'].map((label, i) => <span key={label} className={activeStage >= i + 1 ? 'done' : ''}>{label}</span>)}</div></div> : null}
           <div className="metric-row"><div><span className="metric-icon"><Grid2X2 size={15} /></span><span>Elements<strong>{project.result.elements.length}<small>{project.sample ? 'example layers' : 'detected'}</small></strong></span></div>
             <div><span className="metric-icon"><TypeConfidence /></span><span>OCR confidence<strong>{confidence !== null ? `${confidence}%` : '—'}<small>{confidence !== null ? 'mean text confidence' : 'no OCR run'}</small></strong></span></div>
             <div><span className="metric-icon"><Zap size={15} /></span><span>Processing time<strong>{project.result.duration_ms ? `${(project.result.duration_ms / 1000).toFixed(1)}s` : '—'}<small>{project.result.duration_ms ? project.result.engine === 'local' ? 'local reconstruction' : 'vision model' : 'not measured'}</small></strong></span></div></div>
           {project.result.warnings.length && !project.sample ? <details className="warnings"><summary><CircleAlert size={14} />Review notes<span>{project.result.warnings.length}</span></summary><ul>{project.result.warnings.map(note => <li key={note}>{note}</li>)}</ul></details> : null}
-        </div><Inspector project={project} selected={selected} onSelect={id => { setSelected(id); if (project.source) setView('source'); }} onApply={apply} busy={busy} /></div>
+        </div><Inspector project={project} selected={selected} onSelect={id => { setSelected(id); if (project.source) setView('source'); }} onApply={apply} busy={busy} readOnly={IS_DEMO} /></div>
         <footer className="main-footer"><span>FORM STUDIO <span>© {new Date().getFullYear()}</span></span><span><span className="status-dot" />{preview.status}<span className="footer-dot">·</span>Built from the VERMEG experiment</span></footer>
       </div>
     </main>
@@ -280,11 +291,11 @@ export default function App() {
       void toast.undo!().then(() => notify('Workspace restored.')).catch(error => notify(error.message));
     }}>Undo</button> : null}<button aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></button></div> : null}
     {dialog === 'guide' ? <Dialog title="A better starting point, in three steps." onClose={() => setDialog(null)}><div className="guide-content">
-      <div><span>01</span><h3>Bring your screenshot.</h3><p>Upload, drop, or paste a PNG, JPEG, or WebP. Clear text and uncropped controls work best.</p></div>
-      <div><span>02</span><h3>Generate. Then look closely.</h3><p>Local reconstruction reads text and estimates rows. Optional Ollama vision can interpret more complex layouts. Inspect low-confidence text and correct component types.</p></div>
+      <div><span>01</span><h3>{IS_DEMO ? 'Explore the example.' : 'Bring your screenshot.'}</h3><p>{IS_DEMO ? 'The Orbit workspace is a labeled example. Open Code to change its HTML and CSS, or upload an image to inspect and save it locally.' : 'Upload, drop, or paste a PNG, JPEG, or WebP. Clear text and uncropped controls work best.'}</p></div>
+      <div><span>02</span><h3>{IS_DEMO ? 'Review at three widths.' : 'Generate. Then look closely.'}</h3><p>{IS_DEMO ? 'Preview your code at desktop, tablet and mobile widths. Compare it with the original example; no OCR confidence or processing time is invented.' : 'Local reconstruction reads text and estimates rows. Optional Ollama vision can interpret more complex layouts. Inspect low-confidence text and correct component types.'}</p></div>
       <div><span>03</span><h3>Make it your own.</h3><p>Edit HTML and CSS, test three viewport widths, and export an inert standalone page. Generated interfaces are starting points that need your review.</p></div>
       <div className="guide-shortcuts"><kbd>⌘ / Ctrl + O</kbd>Upload<kbd>/</kbd>Find a layer<kbd>Paste</kbd>Image from clipboard</div>
-      <button className="button generate-button" onClick={() => { setDialog(null); fileInput.current?.click(); }}><Upload size={16} />Bring a screenshot</button></div></Dialog> : null}
+      <button className="button generate-button" onClick={() => { setDialog(null); if (IS_DEMO) setView('code'); else fileInput.current?.click(); }}><Upload size={16} />{IS_DEMO ? 'Open code editor' : 'Bring a screenshot'}</button></div></Dialog> : null}
     {dialog === 'projects' ? <Dialog title="Your workspaces" onClose={() => setDialog(null)}><div className="projects-dialog"><p className="dialog-description">Saved in this browser. Export a backup to keep work outside this device.</p>
       {saved.length ? saved.map(item => <div className="saved-project" key={item.id}><button onClick={() => openProject(item)}><FileImage size={21} /><span><strong>{item.name || 'Untitled workspace'}</strong><small>{new Date(item.updated).toLocaleDateString()} · {item.result.elements.length} elements</small></span><ArrowUpRight size={16} /></button>
         <button className="icon-button" title="Remove saved copy; open workspace stays available" aria-label={`Remove saved copy of ${item.name}`} onClick={() => {
@@ -292,7 +303,7 @@ export default function App() {
         }}><Trash2 size={16} /></button></div>) : <div className="projects-empty"><FolderOpen size={30} /><h3>A clean slate.</h3><p>Upload your first screenshot and your workspace will save here.</p></div>}
       <div className="backup-actions"><button className="button subtle" onClick={() => void backupWorkspace()}><ArrowDownToLine size={15} />Back up current workspace</button>
         <button className="button subtle" disabled={busy} onClick={() => workspaceInput.current?.click()}><Upload size={15} />Import backup</button></div></div></Dialog> : null}
-    {dialog === 'settings' ? <Dialog title="Your processing connection" onClose={() => setDialog(null)}><div className="settings-content"><p className="dialog-description">Screenshots are processed by your configured Python server. Workspaces stay in this browser.</p>
+    {dialog === 'settings' && IS_DEMO ? <DemoInfo onClose={() => setDialog(null)} /> : dialog === 'settings' ? <Dialog title="Your processing connection" onClose={() => setDialog(null)}><div className="settings-content"><p className="dialog-description">Screenshots are processed by your configured Python server. Workspaces stay in this browser.</p>
       <div className="connection-status"><span className={`status-dot ${health ? '' : 'offline'}`} /><strong>{health ? `Server connected · v${health.version}` : 'Processing server unavailable'}</strong></div>
       <label className="field-label">Server access key<input type="password" autoComplete="off" value={keyInput} placeholder={health?.access_key_required ? 'Enter the configured server key' : 'Optional for a local server'} onChange={event => setKeyInput(event.target.value)} /></label>
       <p className="field-note">Held in memory for this session. It is never saved with your workspace.</p>

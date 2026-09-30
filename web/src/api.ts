@@ -1,4 +1,5 @@
 import type { Code, Element, Engines, Health, ImageInfo, Job, Engine } from './types';
+import { IS_DEMO } from './config';
 
 export class ApiError extends Error {
   status: number;
@@ -9,6 +10,7 @@ let accessKey = '';
 export function setAccessKey(key: string) { accessKey = key; }
 
 async function request(path: string, init: RequestInit = {}) {
+  if (IS_DEMO) throw new ApiError('Screenshot processing requires the full Python studio. Your demo workspace stays in this browser.', 0);
   const headers = new Headers(init.headers);
   if (accessKey) headers.set('X-Form-Key', accessKey);
   let response: Response;

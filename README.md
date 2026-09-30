@@ -2,6 +2,10 @@
 
 A local-first studio built from Anis Chelli’s VERMEG UI-to-HTML/CSS prototype. Upload a screenshot, inspect the detected text and components, correct mistakes, edit the generated HTML/CSS, and export a standalone page.
 
+**[Try the interactive browser demo](https://anischelly26.github.io/treasure-hunter/form-studio/)** · [Product case study](https://anischelly26.github.io/treasure-hunter/case-studies/form-vision-to-code.html)
+
+The demo runs the actual React studio without a backend: edit HTML/CSS, compare the example, test three viewport widths, save workspaces, import/export backups and download a protected HTML preview. Screenshots stay in your browser. OCR, element correction, model generation and sanitized HTML/CSS ZIP export require the full Python app below; the demo never fabricates conversion results.
+
 ## What works
 
 - PNG, JPEG, and WebP upload, drag-and-drop, and clipboard paste.
@@ -34,6 +38,15 @@ Open `http://localhost:8000`. On Windows, activate with `.venv\Scripts\Activate.
 ### Development
 
 Run the Python server above and `npm --prefix web run dev` in another terminal. The Vite app uses port 5173 and proxies `/api` to the Python server. Rebuild before using the production server after frontend edits.
+
+### Static browser demo
+
+```bash
+npm --prefix web run build:demo
+npm --prefix web run preview -- --outDir dist-demo
+```
+
+`web/dist-demo` can be served by a static host from any subdirectory. Demo mode is selected at build time (`--mode demo`), suppresses all API requests and uses a separate IndexedDB database. The normal production build retains the Python API and ZIP export. Protected demo HTML downloads strip active/resource markup and retain a restrictive CSP; they are preview documents rather than the full backend export.
 
 ### Optional vision model
 

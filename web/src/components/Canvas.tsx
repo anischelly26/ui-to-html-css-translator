@@ -3,6 +3,7 @@ import { Columns2, Code2, Eye, Image, Laptop, Layers2, Smartphone, Tablet } from
 import type { Project } from '../types';
 import { localDocument } from '../sample';
 import { Tabs } from './Tabs';
+import { IS_DEMO } from '../config';
 
 export type View = 'preview' | 'source' | 'compare' | 'code';
 export type Device = 'desktop' | 'tablet' | 'mobile';
@@ -73,7 +74,7 @@ export function Canvas(props: Props) {
         <div className="canvas-meta"><span><span className="status-dot" />{project.sample ? 'EDITABLE EXAMPLE' : view === 'source' ? 'SOURCE IMAGE' : 'LIVE WORKSPACE'}</span>
           <span>{widths[device]} PX <span className="meta-separator">/</span> {device.toUpperCase()}</span></div>
         {empty && view !== 'source' ? <div className="preview-empty"><Layers2 size={32} /><h3>Your interface starts here.</h3>
-          <p>Generate from your screenshot to bring the preview to life.</p><button className="button subtle" onClick={() => onView('source')}>Inspect source</button></div>
+          <p>{IS_DEMO ? 'Write HTML in the Code tab, or load the example above. Screenshot processing is available in the full Python studio.' : 'Generate from your screenshot to bring the preview to life.'}</p><button className="button subtle" onClick={() => onView('source')}>Inspect source</button></div>
           : view === 'compare' ? <div className="compare-surfaces">
             <div><div className="surface-label">01 <span>{project.sample ? 'Original example' : 'Your screenshot'}</span></div>
               <Surface {...props} source width={widths[device]} /></div>

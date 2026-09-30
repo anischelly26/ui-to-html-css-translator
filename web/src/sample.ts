@@ -25,15 +25,17 @@ export function sampleProject(): Project {
 
 export function localDocument(code: Code): string {
   // The frame has no sandbox permissions, and its CSP blocks scripts, networking, forms, and navigation.
-  // API sanitation is used for normal previews and every export; this fallback keeps the demo usable offline.
-  const parsed = new DOMParser().parseFromString(code.html, 'text/html');
-  parsed.querySelectorAll('script,iframe,object,embed,svg,math,style,meta,link,base,template').forEach(el => el.remove());
-  parsed.querySelectorAll('*').forEach(el => {
+  // Full-studio previews/ZIP exports use API sanitation. Demo HTML downloads retain this restricted CSP.
+  // Template contents are inert while parsing, including image/resource loading.
+  const parsed = document.createElement('template');
+  parsed.innerHTML = code.html;
+  parsed.content.querySelectorAll('script,iframe,object,embed,svg,math,style,meta,link,base,template').forEach(el => el.remove());
+  parsed.content.querySelectorAll('*').forEach(el => {
     [...el.attributes].forEach(attr => {
-      if (attr.name.startsWith('on') || ['src', 'href', 'action', 'formaction', 'srcdoc', 'style'].includes(attr.name)) el.removeAttribute(attr.name);
+      if (attr.name.startsWith('on') || ['src', 'srcset', 'poster', 'background', 'href', 'action', 'formaction', 'srcdoc', 'style'].includes(attr.name)) el.removeAttribute(attr.name);
     });
     if (el.tagName === 'BUTTON') el.setAttribute('type', 'button');
   });
   const css = code.css.replace(/</g, '\\3c ').replace(/>/g, '\\3e ');
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; base-uri 'none'; navigate-to 'none';"><style>${css}</style></head><body>${parsed.body.innerHTML}</body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; base-uri 'none'; navigate-to 'none';"><style>${css}</style></head><body>${parsed.innerHTML}</body></html>`;
 }

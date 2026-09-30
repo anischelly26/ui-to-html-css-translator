@@ -1,11 +1,12 @@
 import type { Project } from './types';
 import { isProject } from './workspace.ts';
+import { IS_DEMO } from './config.ts';
 export { isProject } from './workspace.ts';
 
 let connection: Promise<IDBDatabase> | undefined;
 function db() {
   if (!connection) connection = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open('form-workspaces', 1);
+    const request = indexedDB.open(IS_DEMO ? 'form-demo-workspaces' : 'form-workspaces', 1);
     request.onupgradeneeded = () => request.result.createObjectStore('projects', { keyPath: 'id' });
     request.onsuccess = () => {
       request.result.onversionchange = () => { request.result.close(); connection = undefined; };

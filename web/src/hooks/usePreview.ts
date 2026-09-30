@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { localDocument } from '../sample';
 import type { Code, Engines } from '../types';
+import { IS_DEMO } from '../config';
 
 export function usePreview(code: Code, engines: Engines | null) {
   const fallback = useMemo(() => localDocument(code), [code]);
   const [preview, setPreview] = useState<{ code: Code; document: string; status: string } | null>(null);
   useEffect(() => {
+    if (IS_DEMO) return;
     const abort = new AbortController();
     const timer = window.setTimeout(() => {
       void api.preview(code, abort.signal).then(result => {
@@ -19,5 +21,5 @@ export function usePreview(code: Code, engines: Engines | null) {
     return () => { window.clearTimeout(timer); abort.abort(); };
   }, [code, engines, fallback]);
   // Never display the previous workspace while a new preview request is pending.
-  return preview?.code === code ? preview : { document: fallback, status: 'Local preview' };
+  return preview?.code === code ? preview : { document: fallback, status: IS_DEMO ? 'Protected browser preview' : 'Local preview' };
 }

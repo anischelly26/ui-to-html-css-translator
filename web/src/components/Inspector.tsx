@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react';
 import { ArrowUpRight, ChevronDown, CircleAlert, Layers2, MousePointer2, Search, SlidersHorizontal, Type } from 'lucide-react';
 import type { Element, Kind, Project } from '../types';
 
-export function Inspector({ project, selected, onSelect, onApply, busy }: { project: Project; selected: string | null;
-  onSelect: (id: string) => void; onApply: (element: Element) => Promise<void>; busy: boolean }) {
+export function Inspector({ project, selected, onSelect, onApply, busy, readOnly = false }: { project: Project; selected: string | null;
+  onSelect: (id: string) => void; onApply: (element: Element) => Promise<void>; busy: boolean; readOnly?: boolean }) {
   const [filter, setFilter] = useState('');
   const [lowOnly, setLowOnly] = useState(false);
   const selectedElement = project.result.elements.find(element => element.id === selected);
@@ -27,14 +27,15 @@ export function Inspector({ project, selected, onSelect, onApply, busy }: { proj
     </div>
     {draft ? <div className="element-properties">
       <div className="section-heading"><span>SELECTED ELEMENT</span><span className="selected-dot" /></div>
-      <label className="field-label">Content<textarea aria-label="Element content" value={draft.text} disabled={busy} onChange={event => setDraft({ ...draft, text: event.target.value })} rows={3} maxLength={3000} /></label>
-      <label className="field-label">Component type<select value={draft.kind} disabled={busy} onChange={event => setDraft({ ...draft, kind: event.target.value as Kind })}>
+      <label className="field-label">Content<textarea aria-label="Element content" value={draft.text} disabled={busy} readOnly={readOnly} onChange={event => setDraft({ ...draft, text: event.target.value })} rows={3} maxLength={3000} /></label>
+      <label className="field-label">Component type<select value={draft.kind} disabled={busy || readOnly} onChange={event => setDraft({ ...draft, kind: event.target.value as Kind })}>
         <option value="text">Text</option><option value="heading">Heading</option><option value="button">Button</option><option value="input">Input</option><option value="container">Container</option>
       </select></label>
-      <div className="property-colors"><label className="field-label">Background<input aria-label="Element background" type="color" disabled={busy} value={draft.color} onChange={event => setDraft({ ...draft, color: event.target.value })} /></label>
-        <label className="field-label">Text color<input aria-label="Element text color" type="color" disabled={busy} value={draft.foreground} onChange={event => setDraft({ ...draft, foreground: event.target.value })} /></label></div>
-      <button className="button apply-button" disabled={busy} onClick={() => void onApply(draft)}>Apply correction<ArrowUpRight size={15} /></button>
-      <p className="field-note">Rebuilds the local layout from corrected elements. Code edits can be recovered with Undo.</p>
+      <div className="property-colors"><label className="field-label">Background<input aria-label="Element background" type="color" disabled={busy || readOnly} value={draft.color} onChange={event => setDraft({ ...draft, color: event.target.value })} /></label>
+        <label className="field-label">Text color<input aria-label="Element text color" type="color" disabled={busy || readOnly} value={draft.foreground} onChange={event => setDraft({ ...draft, foreground: event.target.value })} /></label></div>
+      {readOnly ? <p className="field-note">Explore these example layers. Use the Code tab to edit this demo; element correction requires the full Python studio.</p>
+        : <><button className="button apply-button" disabled={busy} onClick={() => void onApply(draft)}>Apply correction<ArrowUpRight size={15} /></button>
+          <p className="field-note">Rebuilds the local layout from corrected elements. Code edits can be recovered with Undo.</p></>}
     </div> : null}
     <div className="palette-section"><div className="section-heading"><span>COLOR PALETTE</span><span>{project.result.palette.length} tones</span></div>
       <div className="palette">{project.result.palette.map(color => <div key={color} title={color}><span style={{ background: color }} /><code>{color}</code></div>)}</div>
