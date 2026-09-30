@@ -27,12 +27,12 @@ export function Inspector({ project, selected, onSelect, onApply, busy }: { proj
     </div>
     {draft ? <div className="element-properties">
       <div className="section-heading"><span>SELECTED ELEMENT</span><span className="selected-dot" /></div>
-      <label className="field-label">Content<textarea value={draft.text} onChange={event => setDraft({ ...draft, text: event.target.value })} rows={3} maxLength={3000} /></label>
-      <label className="field-label">Component type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as Kind })}>
+      <label className="field-label">Content<textarea value={draft.text} disabled={busy} onChange={event => setDraft({ ...draft, text: event.target.value })} rows={3} maxLength={3000} /></label>
+      <label className="field-label">Component type<select value={draft.kind} disabled={busy} onChange={event => setDraft({ ...draft, kind: event.target.value as Kind })}>
         <option value="text">Text</option><option value="heading">Heading</option><option value="button">Button</option><option value="input">Input</option><option value="container">Container</option>
       </select></label>
-      <div className="property-colors"><label className="field-label">Background<input aria-label="Element background" type="color" value={draft.color} onChange={event => setDraft({ ...draft, color: event.target.value })} /></label>
-        <label className="field-label">Text color<input aria-label="Element text color" type="color" value={draft.foreground} onChange={event => setDraft({ ...draft, foreground: event.target.value })} /></label></div>
+      <div className="property-colors"><label className="field-label">Background<input aria-label="Element background" type="color" disabled={busy} value={draft.color} onChange={event => setDraft({ ...draft, color: event.target.value })} /></label>
+        <label className="field-label">Text color<input aria-label="Element text color" type="color" disabled={busy} value={draft.foreground} onChange={event => setDraft({ ...draft, foreground: event.target.value })} /></label></div>
       <button className="button apply-button" disabled={busy} onClick={() => void onApply(draft)}>Apply correction<ArrowUpRight size={15} /></button>
       <p className="field-note">Rebuilds the local layout from corrected elements. Code edits can be recovered with Undo.</p>
     </div> : null}

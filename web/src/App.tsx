@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDownToLine, ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, CircleAlert, Command,
   FileImage, FolderOpen, Grid2X2, ImagePlus, Loader2, Menu, Moon, Plus, Settings2, ShieldCheck, Sparkles,
   Sun, Trash2, Undo2, Upload, X, Zap } from 'lucide-react';
@@ -8,8 +8,10 @@ import type { Device, View } from './components/Canvas';
 import { Dialog } from './components/Dialog';
 import { Editor } from './components/Editor';
 import { Inspector } from './components/Inspector';
-import { localDocument, sampleProject } from './sample';
-import { forgetProject, isProject, projects, saveProject } from './storage';
+import { sampleProject } from './sample';
+import { useWorkspace } from './hooks/useWorkspace';
+import { usePreview } from './hooks/usePreview';
+import { isProject, workspaceName } from './workspace';
 import type { Code, Element, Engine, Engines, Health, Job, Project } from './types';
 
 const stages = ['queued', 'preparing', 'detecting', 'generating', 'reviewing'];
@@ -17,9 +19,10 @@ const stageLabels: Record<string, string> = { queued: 'Waiting for a processing 
   detecting: 'Reading text and structure', generating: 'Building your interface', reviewing: 'Preparing your workspace' };
 
 export default function App() {
-  const [project, setProject] = useState<Project>(sampleProject);
-  const [saved, setSaved] = useState<Project[]>([]);
-  const [saveStatus, setSaveStatus] = useState('Example workspace');
+  const [toast, setToast] = useState<{ message: string; undo?: () => Promise<void> } | null>(null);
+  const notify = useCallback((message: string) => setToast({ message }), []);
+  const workspace = useWorkspace(notify);
+  const { project, saved, saveStatus } = workspace;
   const [view, setView] = useState<View>('preview');
   const [device, setDevice] = useState<Device>('desktop');
   const [selected, setSelected] = useState<string | null>(null);
@@ -31,29 +34,30 @@ export default function App() {
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const [toast, setToast] = useState('');
   const [error, setError] = useState('');
   const [dialog, setDialog] = useState<'guide' | 'projects' | 'settings' | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [keyInput, setKeyInput] = useState('');
-  const [history, setHistory] = useState<Code[]>([]);
-  const [previewDoc, setPreviewDoc] = useState('');
-  const [previewStatus, setPreviewStatus] = useState('Local preview');
-  const [removedProject, setRemovedProject] = useState<Project | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const workspaceInput = useRef<HTMLInputElement>(null);
   const file = useRef<File | null>(null);
   const controller = useRef<AbortController | null>(null);
   const jobId = useRef<string | null>(null);
-  const touched = useRef(false);
-  const saveRevision = useRef(0);
-  const current = useRef(project);
-  current.current = project;
-  const notify = useCallback((message: string) => setToast(message), []);
+  const operation = useRef(false);
+  const connectionRevision = useRef(0);
+  const preview = usePreview(project.code, engines);
+
+  const beginOperation = useCallback(() => {
+    if (operation.current) return false;
+    operation.current = true; setBusy(true); return true;
+  }, []);
+  function endOperation() { operation.current = false; setBusy(false); }
 
   const connect = useCallback(async () => {
+    const revision = ++connectionRevision.current;
     const results = await Promise.allSettled([api.health(), api.engines()]);
+    if (revision !== connectionRevision.current) return false;
     setHealth(results[0].status === 'fulfilled' ? results[0].value : null);
     setEngines(results[1].status === 'fulfilled' ? results[1].value : null);
     if (results[1].status === 'fulfilled') return true;
@@ -62,12 +66,8 @@ export default function App() {
 
   useEffect(() => {
     void connect();
-    void projects().then(items => {
-      setSaved(items);
-      if (items.length && !touched.current) setProject(items[0]);
-    }).catch(() => notify('Browser storage is unavailable. You can still work and export.'));
-    return () => { controller.current?.abort(); };
-  }, [connect, notify]);
+    return () => { connectionRevision.current++; controller.current?.abort(); };
+  }, [connect]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -75,45 +75,16 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (project.sample && !touched.current) return;
-    const revision = ++saveRevision.current;
-    setSaveStatus('Saving…');
-    const timer = window.setTimeout(() => {
-      void saveProject(project).then(() => {
-        if (saveRevision.current !== revision) return;
-        setSaveStatus('Saved on this device');
-        setSaved(items => [project, ...items.filter(item => item.id !== project.id)].sort((a, b) => b.updated - a.updated));
-      }).catch(() => { if (saveRevision.current === revision) { setSaveStatus('Export to keep changes'); notify('This workspace could not be saved. Export it to keep your changes.'); } });
-    }, 850);
-    return () => window.clearTimeout(timer);
-  }, [project, notify]);
-
-  useEffect(() => {
     if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 4500);
+    const timer = window.setTimeout(() => setToast(null), 4500);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  useEffect(() => {
-    const abort = new AbortController();
-    const code = project.code;
-    const timer = window.setTimeout(() => {
-      setPreviewStatus('Updating preview…');
-      void api.preview(code, abort.signal).then(result => {
-        if (abort.signal.aborted) return;
-        setPreviewDoc(result.document); setPreviewStatus(result.removed_unsafe ? 'Unsafe content removed' : 'Protected preview');
-      }).catch(() => {
-        if (abort.signal.aborted) return;
-        setPreviewDoc(localDocument(code)); setPreviewStatus('Offline preview');
-      });
-    }, 350);
-    return () => { window.clearTimeout(timer); abort.abort(); };
-  }, [project.code, engines]);
-
-  const upload = useCallback(async (image: File) => {
-    if (busy || controller.current) { notify('Finish or cancel the current conversion before uploading another image.'); return; }
+  async function upload(image: File) {
+    if (operation.current) { notify('Finish or cancel the current operation before uploading another image.'); return; }
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.type)) { setError('Choose a PNG, JPEG, or WebP screenshot.'); return; }
     if (image.size > 8 * 1024 * 1024) { setError('Choose a screenshot smaller than 8 MB.'); return; }
+    if (!beginOperation()) return;
     try {
       const bitmap = await createImageBitmap(image);
       if (bitmap.width * bitmap.height > 12_000_000) { bitmap.close(); throw new Error('Choose a screenshot with fewer than 12 million pixels.'); }
@@ -125,17 +96,17 @@ export default function App() {
       context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height);
       context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
       const source = canvas.toDataURL('image/webp', .92);
-      if (touched.current) void saveProject(current.current).catch(() => {});
-      file.current = image; touched.current = true;
+      file.current = image;
       const code = { html: '', css: '' };
-      setProject({ version: 1, id: crypto.randomUUID(), name: image.name.replace(/\.[^.]+$/, '') || 'Untitled screenshot',
+      workspace.open({ version: 1, id: crypto.randomUUID(), name: (image.name.replace(/\.[^.]+$/, '') || 'Untitled screenshot').slice(0, 80),
         updated: Date.now(), source, sample: false, code, baseline: code,
         result: { code, elements: [], image: { width: canvas.width, height: canvas.height, background: '#ffffff' },
-          engine: 'local', duration_ms: 0, warnings: [], palette: [] } });
-      setSelected(null); setHistory([]); setError(''); setView('source'); setDialog(null); setMobileMenu(false);
+          engine: 'local', duration_ms: 0, warnings: [], palette: [] } }, true);
+      setSelected(null); setError(''); setView('source'); setDialog(null); setMobileMenu(false);
       notify('Screenshot ready. Choose an engine and generate your interface.');
     } catch (error) { setError(error instanceof Error ? error.message : 'This image could not be opened.'); }
-  }, [notify, busy]);
+    finally { endOperation(); }
+  }
 
   useEffect(() => {
     const paste = (event: ClipboardEvent) => {
@@ -150,10 +121,10 @@ export default function App() {
     };
     document.addEventListener('paste', paste); document.addEventListener('keydown', keys);
     return () => { document.removeEventListener('paste', paste); document.removeEventListener('keydown', keys); };
-  }, [dialog, upload, busy]);
+  });
 
   async function generate() {
-    if (busy || !project.source) return;
+    if (!project.source || !beginOperation()) return;
     const snapshot = project;
     const abort = new AbortController(); controller.current = abort; jobId.current = null;
     setBusy(true); setError(''); setJob({ id: '', status: 'queued', progress: 0, error: null, result: null });
@@ -171,9 +142,7 @@ export default function App() {
         if (update.status === 'cancelled') throw new DOMException('Aborted', 'AbortError');
         if (update.status === 'complete' && update.result) {
           const result = update.result;
-          touched.current = true;
-          setHistory(items => [...items.slice(-11), snapshot.code]);
-          setProject({ ...snapshot, result, code: result.code, baseline: result.code, updated: Date.now() });
+          workspace.update(value => ({ ...value, result, code: result.code, baseline: result.code }), true);
           setView('compare'); setSelected(null);
           notify(`Reconstructed ${result.elements.length} elements. Review the result before exporting.`);
           break;
@@ -182,7 +151,7 @@ export default function App() {
       }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) setError(error instanceof Error ? error.message : 'The conversion could not finish.');
-    } finally { controller.current = null; jobId.current = null; setBusy(false); setJob(null); }
+    } finally { controller.current = null; jobId.current = null; endOperation(); setJob(null); }
   }
 
   function cancel() {
@@ -192,33 +161,31 @@ export default function App() {
   }
 
   function changeCode(code: Code) {
-    touched.current = true;
-    setProject(value => ({ ...value, code, updated: Date.now() }));
+    workspace.update(value => ({ ...value, code }));
   }
 
   async function apply(element: Element) {
-    setBusy(true); setError('');
+    if (!beginOperation()) return;
+    setError('');
     try {
       const elements = project.result.elements.map(value => value.id === element.id ? element : value);
       const code = await api.regenerate(elements, project.result.image);
-      setHistory(items => [...items.slice(-11), project.code]); touched.current = true;
-      setProject(value => ({ ...value, code, updated: Date.now(), result: { ...value.result, elements } }));
-      setView('preview'); notify('Correction applied. Use Undo to restore your previous code.');
+      workspace.update(value => ({ ...value, code, baseline: code, result: { ...value.result, code, elements } }), true);
+      setView('preview'); notify('Correction applied. Undo restores the previous code and elements.');
     } catch (error) { setError(error instanceof Error ? error.message : 'This correction could not be applied.'); }
-    finally { setBusy(false); }
+    finally { endOperation(); }
   }
 
   async function exportCode() {
     setExporting(true); setError('');
-    try { download(await api.export(project.code, project.name), 'form-interface.zip'); notify('Your HTML and CSS export is ready.'); }
+    try { download(await api.export(project.code, workspaceName(project.name)), 'form-interface.zip'); notify('Your HTML and CSS export is ready.'); }
     catch (error) { setError(error instanceof Error ? error.message : 'Export failed. Check the server connection.'); }
     finally { setExporting(false); }
   }
 
   function openProject(item: Project) {
-    if (busy) { notify('Finish or cancel the current conversion before switching workspaces.'); return; }
-    if (touched.current && current.current.id !== item.id) void saveProject(current.current).catch(() => notify('The previous workspace could not be saved.'));
-    touched.current = true; file.current = null; setProject(item); setSelected(null); setHistory([]); setView(item.code.html ? 'preview' : 'source');
+    if (operation.current) { notify('Finish or cancel the current operation before switching workspaces.'); return; }
+    workspace.open(item); file.current = null; setSelected(null); setView(item.code.html ? 'preview' : 'source');
     setError(''); setDialog(null); setMobileMenu(false);
   }
 
@@ -228,21 +195,22 @@ export default function App() {
   }
 
   async function importWorkspace(input: File) {
-    if (busy) return;
+    if (!beginOperation()) return;
     try {
       if (input.size > 13_000_000) throw new Error('This workspace backup is too large.');
       const restored: unknown = JSON.parse(await input.text());
       if (!isProject(restored)) throw new Error('This is not a valid FORM workspace backup.');
-      openProject({ ...restored, id: crypto.randomUUID(), updated: Date.now() });
+      workspace.open({ ...restored, id: crypto.randomUUID(), updated: Date.now() }, true);
+      file.current = null; setSelected(null); setView(restored.code.html ? 'preview' : 'source');
+      setError(''); setDialog(null); setMobileMenu(false);
       notify('Workspace imported. Your original saved copies are unchanged.');
     } catch (error) { setError(error instanceof Error ? error.message : 'This workspace backup could not be read.'); }
+    finally { endOperation(); }
   }
 
-  const fallbackDoc = useMemo(() => localDocument(project.code), [project.code]);
   const confidenceValues = project.result.elements.flatMap(element => element.confidence === null ? [] : [element.confidence]);
   const confidence = confidenceValues.length ? Math.round(confidenceValues.reduce((a, b) => a + b, 0) / confidenceValues.length) : null;
   const activeStage = job ? stages.indexOf(job.status) : -1;
-  const preview = previewDoc || fallbackDoc;
 
   return <div className={`app-shell ${mobileMenu ? 'menu-open' : ''}`}
     onDragOver={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDragging(true); } }}
@@ -279,16 +247,17 @@ export default function App() {
         <div className="workflow-strip"><span><span className="step-bubble">1</span>Bring a screenshot</span><ChevronRight size={13} /><span><span className="step-bubble">2</span>Understand the structure</span><ChevronRight size={13} /><span><span className="step-bubble">3</span>Make it your own</span><span className="workflow-hint">Thoughtful tools. Better starting points.</span></div>
 
         <section className="project-bar" aria-label="Current workspace"><div className="project-title"><span className="project-file-icon"><FileImage size={19} /></span><div><input aria-label="Workspace name" value={project.name} maxLength={80} disabled={busy}
-          onChange={event => { touched.current = true; setProject(value => ({ ...value, name: event.target.value, updated: Date.now() })); }} /><span><span className="save-dot" />{saveStatus}{project.sample ? <span className="sample-badge">SAMPLE</span> : null}</span></div></div>
-          <div className="project-actions"><button className="icon-button" aria-label="Undo last reconstruction change" disabled={!history.length || busy} onClick={() => { const previous = history.at(-1); if (previous) { changeCode(previous); setHistory(value => value.slice(0, -1)); notify('Previous code restored.'); } }} title="Undo"><Undo2 size={17} /></button>
+          onChange={event => workspace.update(value => ({ ...value, name: event.target.value }))}
+          onBlur={() => { if (!project.name.trim()) workspace.update(value => ({ ...value, name: workspaceName(value.name) })); }} /><span><span className="save-dot" />{saveStatus}{project.sample ? <span className="sample-badge">SAMPLE</span> : null}</span></div></div>
+          <div className="project-actions"><button className="icon-button" aria-label="Undo last reconstruction change" disabled={!workspace.canUndo || busy} onClick={() => { workspace.undo(); notify('Previous reconstruction and elements restored.'); }} title="Undo"><Undo2 size={17} /></button>
             <button className="button subtle" disabled={!project.code.html || exporting || busy} onClick={() => void exportCode()}>{exporting ? <Loader2 className="spinning" size={15} /> : <ArrowDownToLine size={15} />}Export code</button></div></section>
 
         {error ? <div className="error-banner" role="alert"><CircleAlert size={18} /><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div> : null}
 
         <div className="studio-grid"><div className="workspace-column">
-          <Canvas project={project} document={preview} selected={selected} onSelect={setSelected} view={view} onView={setView}
+          <Canvas project={project} document={preview.document} selected={selected} onSelect={setSelected} view={view} onView={setView}
             device={device} onDevice={setDevice} overlay={overlay} onOverlay={() => setOverlay(value => !value)}>
-            <Editor code={project.code} disabled={busy} onChange={changeCode} onReset={() => { setHistory(items => [...items.slice(-11), project.code]); changeCode({ ...project.baseline }); notify('Generated code restored.'); }} notify={notify} />
+            <Editor code={project.code} disabled={busy} onChange={changeCode} onReset={() => { workspace.update(value => ({ ...value, code: { ...value.baseline } }), true); notify('Generated code restored.'); }} notify={notify} />
           </Canvas>
           <div className="generation-bar"><div className="engine-choice"><span className="engine-icon"><Zap size={17} /></span><label><span>RECONSTRUCTION ENGINE</span><select aria-label="Reconstruction engine" value={engine} disabled={busy} onChange={event => setEngine(event.target.value as Engine)}><option value="local">Local vision + OCR</option><option value="ollama" disabled={!engines?.ollama}>{engines?.ollama ? `Vision model · ${engines.model}` : 'Vision model · connect Ollama'}</option></select></label></div>
             {health && !engines ? <button className="button generate-button" onClick={() => setDialog('settings')}><Settings2 size={16} />Connect processing<ArrowRight size={16} /></button>
@@ -299,14 +268,14 @@ export default function App() {
             <div><span className="metric-icon"><Zap size={15} /></span><span>Processing time<strong>{project.result.duration_ms ? `${(project.result.duration_ms / 1000).toFixed(1)}s` : '—'}<small>{project.result.duration_ms ? project.result.engine === 'local' ? 'local reconstruction' : 'vision model' : 'not measured'}</small></strong></span></div></div>
           {project.result.warnings.length && !project.sample ? <details className="warnings"><summary><CircleAlert size={14} />Review notes<span>{project.result.warnings.length}</span></summary><ul>{project.result.warnings.map(note => <li key={note}>{note}</li>)}</ul></details> : null}
         </div><Inspector project={project} selected={selected} onSelect={id => { setSelected(id); if (project.source) setView('source'); }} onApply={apply} busy={busy} /></div>
-        <footer className="main-footer"><span>FORM STUDIO <span>© {new Date().getFullYear()}</span></span><span><span className="status-dot" />{previewStatus}<span className="footer-dot">·</span>Built from the VERMEG experiment</span></footer>
+        <footer className="main-footer"><span>FORM STUDIO <span>© {new Date().getFullYear()}</span></span><span><span className="status-dot" />{preview.status}<span className="footer-dot">·</span>Built from the VERMEG experiment</span></footer>
       </div>
     </main>
 
     {dragging ? <div className="drag-overlay"><ImagePlus size={42} /><h2>Drop your next idea here.</h2><p>PNG, JPEG, or WebP · up to 8 MB</p></div> : null}
-    {toast ? <div className="toast" role="status"><Check size={17} /><span>{toast}</span>{removedProject ? <button onClick={() => {
-      void saveProject(removedProject).then(() => { setSaved(items => [removedProject, ...items.filter(item => item.id !== removedProject.id)]); setRemovedProject(null); notify('Workspace restored.'); }).catch(error => notify(error.message));
-    }}>Undo</button> : null}<button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={14} /></button></div> : null}
+    {toast ? <div className="toast" role="status"><Check size={17} /><span>{toast.message}</span>{toast.undo ? <button onClick={() => {
+      void toast.undo!().then(() => notify('Workspace restored.')).catch(error => notify(error.message));
+    }}>Undo</button> : null}<button aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={14} /></button></div> : null}
     {dialog === 'guide' ? <Dialog title="A better starting point, in three steps." onClose={() => setDialog(null)}><div className="guide-content">
       <div><span>01</span><h3>Bring your screenshot.</h3><p>Upload, drop, or paste a PNG, JPEG, or WebP. Clear text and uncropped controls work best.</p></div>
       <div><span>02</span><h3>Generate. Then look closely.</h3><p>Local reconstruction reads text and estimates rows. Optional Ollama vision can interpret more complex layouts. Inspect low-confidence text and correct component types.</p></div>
@@ -316,7 +285,7 @@ export default function App() {
     {dialog === 'projects' ? <Dialog title="Your workspaces" onClose={() => setDialog(null)}><div className="projects-dialog"><p className="dialog-description">Saved in this browser. Export a backup to keep work outside this device.</p>
       {saved.length ? saved.map(item => <div className="saved-project" key={item.id}><button onClick={() => openProject(item)}><FileImage size={21} /><span><strong>{item.name || 'Untitled workspace'}</strong><small>{new Date(item.updated).toLocaleDateString()} · {item.result.elements.length} elements</small></span><ArrowUpRight size={16} /></button>
         <button className="icon-button" title="Remove saved copy; open workspace stays available" aria-label={`Remove saved copy of ${item.name}`} onClick={() => {
-          void forgetProject(item.id).then(() => { setRemovedProject(item); setSaved(values => values.filter(value => value.id !== item.id)); notify('Saved copy removed. You can undo this removal.'); }).catch(error => notify(error.message));
+          void workspace.remove(item).then(() => setToast({ message: 'Saved copy removed. You can undo this removal.', undo: () => workspace.recover(item) })).catch(error => notify(error.message));
         }}><Trash2 size={16} /></button></div>) : <div className="projects-empty"><FolderOpen size={30} /><h3>A clean slate.</h3><p>Upload your first screenshot and your workspace will save here.</p></div>}
       <div className="backup-actions"><button className="button subtle" onClick={() => void backupWorkspace()}><ArrowDownToLine size={15} />Back up current workspace</button>
         <button className="button subtle" disabled={busy} onClick={() => workspaceInput.current?.click()}><Upload size={15} />Import backup</button></div></div></Dialog> : null}

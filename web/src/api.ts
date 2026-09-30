@@ -12,7 +12,9 @@ async function request(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   if (accessKey) headers.set('X-Form-Key', accessKey);
   let response: Response;
-  try { response = await fetch(`/api/${path}`, { ...init, headers, signal: init.signal ?? AbortSignal.timeout(15000) }); }
+  const timeout = AbortSignal.timeout(15000);
+  const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
+  try { response = await fetch(`/api/${path}`, { ...init, headers, signal }); }
   catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
     throw new ApiError('The processing server is unavailable. Your workspace is still here.', 0);

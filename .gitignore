@@ -13,4 +13,5 @@ input/*
 !input/.gitkeep
 coverage/
 test-results/
+playwright-report/
 *.tsbuildinfo

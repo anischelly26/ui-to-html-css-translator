@@ -71,8 +71,14 @@ async def ollama_available(config: Settings) -> bool:
         async with httpx.AsyncClient(timeout=2, follow_redirects=False, trust_env=False) as client:
             response = await client.get(config.ollama_url.rstrip("/") + "/api/tags")
             response.raise_for_status()
-            models = response.json().get("models", [])
+            payload = response.json()
+            if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+                return False
+            models = payload["models"]
             expected = config.ollama_model
-            return any(model.get("name") in {expected, expected + ":latest"} for model in models)
+            return any(
+                isinstance(model, dict) and model.get("name") in {expected, expected + ":latest"}
+                for model in models
+            )
     except (httpx.HTTPError, ValueError, TypeError):
         return False

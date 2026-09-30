@@ -86,7 +86,9 @@ def create_app(config: Settings = settings) -> FastAPI:
         except ValueError:
             local = host == "testclient"
         if config.api_key:
-            if not hmac.compare_digest(request.headers.get("x-form-key", ""), config.api_key):
+            if not hmac.compare_digest(
+                request.headers.get("x-form-key", "").encode("utf-8"), config.api_key.encode("utf-8")
+            ):
                 raise HTTPException(401, "Enter the server access key in Connection settings.")
         elif not local:
             raise HTTPException(403, "Remote processing requires a server access key.")
