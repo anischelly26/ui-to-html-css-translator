@@ -1,82 +1,86 @@
-<div align="center">
+# FORM — Vision to Code Studio
 
-# UI → HTML/CSS Translator
+A local-first studio built from Anis Chelli’s VERMEG UI-to-HTML/CSS prototype. Upload a screenshot, inspect the detected text and components, correct mistakes, edit the generated HTML/CSS, and export a standalone page.
 
-### Computer vision + OCR prototype for reconstructing web interfaces from screenshots
+## What works
 
-![Python](https://img.shields.io/badge/Python-3.x-111111?style=for-the-badge&logo=python)
-![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-111111?style=for-the-badge&logo=opencv)
-![Tesseract](https://img.shields.io/badge/Tesseract-OCR-111111?style=for-the-badge)
+- PNG, JPEG, and WebP upload, drag-and-drop, and clipboard paste.
+- One page-level Tesseract pass with bounded geometric component inference.
+- Source overlays, low-confidence filtering, element search, and editable text/type/colors.
+- Responsive row/grid reconstruction, HTML/CSS editing, source/preview comparison, and three preview widths.
+- Optional Ollama vision generation with structured responses and server-side sanitation.
+- IndexedDB workspaces, automatic saving, JSON backup/import, and reconstruction undo.
+- Light/dark themes, keyboard shortcuts, focus states, modal focus management, and reduced-motion support.
+- Sanitized ZIP export; no scripts or remote assets in exported documents.
 
-</div>
+The Orbit workspace is an explicitly labelled editable example. Its OCR confidence and processing time are not fabricated. Local reconstruction is heuristic: it does not recover an application’s business logic, original fonts, images, or interactions. OCR confidence measures text recognition, not screenshot fidelity. Vision-generated code also needs review.
 
----
+## Quick start
 
-## What it does
+Install **Python 3.11+**, **Node 24+**, and **Tesseract with the English language pack**. On Debian/Ubuntu: `sudo apt-get install tesseract-ocr`.
 
-This project explores a simple idea: **turn a UI screenshot into editable web structure**.
-
-The current prototype processes an input screenshot, detects visual interface elements, extracts text with OCR, estimates dominant colors and geometry, then generates an HTML representation of the detected components.
-
-It is an experimental foundation for a broader **UI-to-Code** workflow.
-
-## Pipeline
-
-```text
-UI Screenshot
-     ↓
-Image preprocessing
-     ↓
-Contour / component detection
-     ↓
-OCR text extraction
-     ↓
-Element classification
-     ↓
-Position + color estimation
-     ↓
-Generated HTML
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.lock
+pip install --no-deps -e .
+npm --prefix web ci
+npm --prefix web run build
+uvicorn studio.api:app --host 127.0.0.1 --port 8000
 ```
 
-## Core ideas
+Open `http://localhost:8000`. On Windows, activate with `.venv\Scripts\Activate.ps1`. If Tesseract is not on PATH, set `FORM_TESSERACT_CMD` to its executable path.
 
-- **Image preprocessing** with grayscale conversion, CLAHE and adaptive thresholding
-- **UI element detection** using OpenCV contours and geometry
-- **Text extraction** with Tesseract OCR
-- **Basic component classification** for buttons, labels and input fields
-- **Dominant-color extraction** using clustering
-- **HTML generation** from detected positions, dimensions, colors and text
-- **Debug visualizations** to inspect the detection pipeline
+### Development
 
-## Project structure
+Run the Python server above and `npm --prefix web run dev` in another terminal. The Vite app uses port 5173 and proxies `/api` to the Python server. Rebuild before using the production server after frontend edits.
 
-```text
-ui-to-html-css-translator/
-├── config.py             # thresholds, paths and detection settings
-├── image_processor.py    # image loading and preprocessing
-├── element_detector.py   # detection, OCR and classification
-├── html_generator.py     # HTML generation utilities
-├── main.py               # end-to-end pipeline
-├── input/                # source screenshots
-└── output/               # generated files / debug images
+### Optional vision model
+
+```bash
+ollama pull llava
+ollama serve
 ```
 
-## Current scope
+The server defaults to `http://127.0.0.1:11434` and model `llava`. Configure another supported vision model with `FORM_OLLAMA_MODEL`. Refresh Connection settings to check availability. Provider requests use structured JSON, a low temperature, fixed output limits, and no environment proxy. A live Ollama generation was not available during this upgrade; its response contract was tested with mocked HTTP responses.
 
-This repository is a **prototype**, not a production UI generator. The current approach is intentionally lightweight and heuristic-based, which makes the project useful for experimenting with the core reconstruction pipeline before moving to richer vision-language models and semantic layout understanding.
+### CLI
 
-## Next steps
+```bash
+form-studio screenshot.png --output output
+form-studio screenshot.png --engine ollama --output output
+```
 
-- Improve responsive layout reconstruction
-- Detect a wider range of UI components
-- Reconstruct CSS more accurately
-- Add semantic grouping and hierarchy detection
-- Improve OCR robustness
-- Compare heuristic detection with vision-language-model approaches
-- Generate React / component-based output
+The CLI writes `index.html`, `styles.css`, and `analysis.json`, and exits with a failure status when conversion fails. The old `python main.py` entry point delegates to this same pipeline; old internal function signatures have been replaced by typed interfaces.
 
-## About
+## Configuration and security
 
-Built by **Anis Chelly**, Software Engineering student focused on **AI, computer vision, backend systems and intelligent software products**.
+See `.env.example`. Configuration comes from process environment; the file is not automatically loaded.
 
-> I’m interested in building software that does more than display information — software that understands, transforms and automates it.
+- Default processing access is loopback-only, with origin and host validation against DNS rebinding.
+- Set a strong `FORM_API_KEY` before exposing the server beyond your machine, and enter it in Connection settings. Browser keys remain in memory and are never saved in workspaces.
+- This key is for one trusted workspace/server. It is **not multi-user authentication or tenant isolation**.
+- The API accepts at most 8 MB per image, 12 million decoded pixels, 2400px per dimension, and 180 detected elements. JSON bodies are also bounded, including chunked requests.
+- Two workers process at most eight active/queued jobs. Job capabilities are unguessable; completed results expire and retention is bounded. Images are not written to server disk.
+- Cancellation discards output and stops at stage boundaries; a running OCR or model call finishes or times out before releasing its slot.
+- HTML allowlists, parsed CSS filtering, sandboxed previews, restrictive CSP, and export sanitation block scripts and remote resources. No general-purpose JavaScript execution is supported.
+
+## Tests
+
+```bash
+pip install 'pytest>=8,<10' 'ruff>=0.11,<1'
+pytest -q
+ruff check studio tests config.py main.py element_detector.py image_processor.py html_generator.py
+npm --prefix web run build
+npm --prefix web audit
+```
+
+Tests cover actual OCR on a synthetic screenshot, image bounds, malformed input, HTML escaping, hostile HTML/CSS, provider contracts, API authorization/origin checks, reconstruction/export, queue saturation, and cancellation. GitHub Actions runs Python and frontend checks. See [verification notes](docs/VERIFICATION.md) for actual results and limits.
+
+## Deployment and scale
+
+The Dockerfile builds the frontend and runs the Python service as an unprivileged user. Build with `docker build -t form-studio .`; set `FORM_API_KEY` and run it with a port bound to localhost. Docker, public hosting, and production load tests were not executed during this upgrade.
+
+This is a **single-process studio**, not a service proven for millions of users. Do not add multiple Uvicorn workers: jobs live in process memory. A public product needs per-user identity/authorization, a shared durable queue, isolated workers, persistent storage with retention controls, distributed rate limiting, monitoring, and measured load tests. See [architecture](docs/ARCHITECTURE.md).
+
+Built by Anis Chelli. Original VERMEG work: OpenCV + Tesseract UI reconstruction; this upgrade adds the inspectable studio and optional vision-provider integration.

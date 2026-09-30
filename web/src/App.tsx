@@ -1,0 +1,333 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDownToLine, ArrowRight, ArrowUpRight, BookOpen, Check, ChevronRight, CircleAlert, Command,
+  FileImage, FolderOpen, Grid2X2, ImagePlus, Loader2, Menu, Moon, Plus, Settings2, ShieldCheck, Sparkles,
+  Sun, Trash2, Undo2, Upload, X, Zap } from 'lucide-react';
+import { api, download, setAccessKey, wait } from './api';
+import { Canvas } from './components/Canvas';
+import type { Device, View } from './components/Canvas';
+import { Dialog } from './components/Dialog';
+import { Editor } from './components/Editor';
+import { Inspector } from './components/Inspector';
+import { localDocument, sampleProject } from './sample';
+import { forgetProject, isProject, projects, saveProject } from './storage';
+import type { Code, Element, Engine, Engines, Health, Job, Project } from './types';
+
+const stages = ['queued', 'preparing', 'detecting', 'generating', 'reviewing'];
+const stageLabels: Record<string, string> = { queued: 'Waiting for a processing slot', preparing: 'Preparing your screenshot',
+  detecting: 'Reading text and structure', generating: 'Building your interface', reviewing: 'Preparing your workspace' };
+
+export default function App() {
+  const [project, setProject] = useState<Project>(sampleProject);
+  const [saved, setSaved] = useState<Project[]>([]);
+  const [saveStatus, setSaveStatus] = useState('Example workspace');
+  const [view, setView] = useState<View>('preview');
+  const [device, setDevice] = useState<Device>('desktop');
+  const [selected, setSelected] = useState<string | null>(null);
+  const [overlay, setOverlay] = useState(true);
+  const [theme, setTheme] = useState(() => { try { return localStorage.getItem('form-theme') === 'dark' ? 'dark' : 'light'; } catch { return 'light'; } });
+  const [health, setHealth] = useState<Health | null>(null);
+  const [engines, setEngines] = useState<Engines | null>(null);
+  const [engine, setEngine] = useState<Engine>('local');
+  const [job, setJob] = useState<Job | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [toast, setToast] = useState('');
+  const [error, setError] = useState('');
+  const [dialog, setDialog] = useState<'guide' | 'projects' | 'settings' | null>(null);
+  const [mobileMenu, setMobileMenu] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [keyInput, setKeyInput] = useState('');
+  const [history, setHistory] = useState<Code[]>([]);
+  const [previewDoc, setPreviewDoc] = useState('');
+  const [previewStatus, setPreviewStatus] = useState('Local preview');
+  const [removedProject, setRemovedProject] = useState<Project | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const workspaceInput = useRef<HTMLInputElement>(null);
+  const file = useRef<File | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  const jobId = useRef<string | null>(null);
+  const touched = useRef(false);
+  const saveRevision = useRef(0);
+  const current = useRef(project);
+  current.current = project;
+  const notify = useCallback((message: string) => setToast(message), []);
+
+  const connect = useCallback(async () => {
+    const results = await Promise.allSettled([api.health(), api.engines()]);
+    setHealth(results[0].status === 'fulfilled' ? results[0].value : null);
+    setEngines(results[1].status === 'fulfilled' ? results[1].value : null);
+    if (results[1].status === 'fulfilled') return true;
+    return false;
+  }, []);
+
+  useEffect(() => {
+    void connect();
+    void projects().then(items => {
+      setSaved(items);
+      if (items.length && !touched.current) setProject(items[0]);
+    }).catch(() => notify('Browser storage is unavailable. You can still work and export.'));
+    return () => { controller.current?.abort(); };
+  }, [connect, notify]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('form-theme', theme); } catch { /* Theme is still applied for this session. */ }
+  }, [theme]);
+
+  useEffect(() => {
+    if (project.sample && !touched.current) return;
+    const revision = ++saveRevision.current;
+    setSaveStatus('Saving…');
+    const timer = window.setTimeout(() => {
+      void saveProject(project).then(() => {
+        if (saveRevision.current !== revision) return;
+        setSaveStatus('Saved on this device');
+        setSaved(items => [project, ...items.filter(item => item.id !== project.id)].sort((a, b) => b.updated - a.updated));
+      }).catch(() => { if (saveRevision.current === revision) { setSaveStatus('Export to keep changes'); notify('This workspace could not be saved. Export it to keep your changes.'); } });
+    }, 850);
+    return () => window.clearTimeout(timer);
+  }, [project, notify]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(''), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    const code = project.code;
+    const timer = window.setTimeout(() => {
+      setPreviewStatus('Updating preview…');
+      void api.preview(code, abort.signal).then(result => {
+        if (abort.signal.aborted) return;
+        setPreviewDoc(result.document); setPreviewStatus(result.removed_unsafe ? 'Unsafe content removed' : 'Protected preview');
+      }).catch(() => {
+        if (abort.signal.aborted) return;
+        setPreviewDoc(localDocument(code)); setPreviewStatus('Offline preview');
+      });
+    }, 350);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [project.code, engines]);
+
+  const upload = useCallback(async (image: File) => {
+    if (busy || controller.current) { notify('Finish or cancel the current conversion before uploading another image.'); return; }
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(image.type)) { setError('Choose a PNG, JPEG, or WebP screenshot.'); return; }
+    if (image.size > 8 * 1024 * 1024) { setError('Choose a screenshot smaller than 8 MB.'); return; }
+    try {
+      const bitmap = await createImageBitmap(image);
+      if (bitmap.width * bitmap.height > 12_000_000) { bitmap.close(); throw new Error('Choose a screenshot with fewer than 12 million pixels.'); }
+      const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(bitmap.width * scale); canvas.height = Math.round(bitmap.height * scale);
+      const context = canvas.getContext('2d');
+      if (!context) { bitmap.close(); throw new Error('This browser could not read the screenshot.'); }
+      context.fillStyle = '#ffffff'; context.fillRect(0, 0, canvas.width, canvas.height);
+      context.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+      const source = canvas.toDataURL('image/webp', .92);
+      if (touched.current) void saveProject(current.current).catch(() => {});
+      file.current = image; touched.current = true;
+      const code = { html: '', css: '' };
+      setProject({ version: 1, id: crypto.randomUUID(), name: image.name.replace(/\.[^.]+$/, '') || 'Untitled screenshot',
+        updated: Date.now(), source, sample: false, code, baseline: code,
+        result: { code, elements: [], image: { width: canvas.width, height: canvas.height, background: '#ffffff' },
+          engine: 'local', duration_ms: 0, warnings: [], palette: [] } });
+      setSelected(null); setHistory([]); setError(''); setView('source'); setDialog(null); setMobileMenu(false);
+      notify('Screenshot ready. Choose an engine and generate your interface.');
+    } catch (error) { setError(error instanceof Error ? error.message : 'This image could not be opened.'); }
+  }, [notify, busy]);
+
+  useEffect(() => {
+    const paste = (event: ClipboardEvent) => {
+      const image = [...(event.clipboardData?.items ?? [])].find(item => item.type.startsWith('image/'))?.getAsFile();
+      if (image && !dialog && !busy) { event.preventDefault(); void upload(image); }
+    };
+    const keys = (event: KeyboardEvent) => {
+      const tag = (event.target as HTMLElement)?.tagName;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || dialog) return;
+      if (event.key === '/') { event.preventDefault(); document.querySelector<HTMLInputElement>('[aria-label="Search detected elements"]')?.focus(); }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'o') { event.preventDefault(); fileInput.current?.click(); }
+    };
+    document.addEventListener('paste', paste); document.addEventListener('keydown', keys);
+    return () => { document.removeEventListener('paste', paste); document.removeEventListener('keydown', keys); };
+  }, [dialog, upload, busy]);
+
+  async function generate() {
+    if (busy || !project.source) return;
+    const snapshot = project;
+    const abort = new AbortController(); controller.current = abort; jobId.current = null;
+    setBusy(true); setError(''); setJob({ id: '', status: 'queued', progress: 0, error: null, result: null });
+    try {
+      let input: Blob;
+      if (file.current) input = file.current;
+      else if (/^data:image\/(png|jpeg|webp);base64,/.test(snapshot.source!)) input = await (await fetch(snapshot.source!)).blob();
+      else throw new Error('The saved screenshot could not be read. Upload it again.');
+      const submitted = await api.submit(input, engine, abort.signal); jobId.current = submitted.id;
+      const deadline = Date.now() + 180_000;
+      while (!abort.signal.aborted) {
+        if (Date.now() > deadline) { void api.cancel(submitted.id).catch(() => {}); throw new Error('The conversion timed out. Try a smaller screenshot or local reconstruction.'); }
+        const update = await api.job(submitted.id, abort.signal); setJob(update);
+        if (update.status === 'failed') throw new Error(update.error || 'Conversion failed. Try a different screenshot.');
+        if (update.status === 'cancelled') throw new DOMException('Aborted', 'AbortError');
+        if (update.status === 'complete' && update.result) {
+          const result = update.result;
+          touched.current = true;
+          setHistory(items => [...items.slice(-11), snapshot.code]);
+          setProject({ ...snapshot, result, code: result.code, baseline: result.code, updated: Date.now() });
+          setView('compare'); setSelected(null);
+          notify(`Reconstructed ${result.elements.length} elements. Review the result before exporting.`);
+          break;
+        }
+        await wait(550, abort.signal);
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) setError(error instanceof Error ? error.message : 'The conversion could not finish.');
+    } finally { controller.current = null; jobId.current = null; setBusy(false); setJob(null); }
+  }
+
+  function cancel() {
+    controller.current?.abort();
+    if (jobId.current) void api.cancel(jobId.current).catch(() => notify('The server may finish its current processing step before cancelling.'));
+    notify('Conversion cancelled. Your workspace is unchanged.');
+  }
+
+  function changeCode(code: Code) {
+    touched.current = true;
+    setProject(value => ({ ...value, code, updated: Date.now() }));
+  }
+
+  async function apply(element: Element) {
+    setBusy(true); setError('');
+    try {
+      const elements = project.result.elements.map(value => value.id === element.id ? element : value);
+      const code = await api.regenerate(elements, project.result.image);
+      setHistory(items => [...items.slice(-11), project.code]); touched.current = true;
+      setProject(value => ({ ...value, code, updated: Date.now(), result: { ...value.result, elements } }));
+      setView('preview'); notify('Correction applied. Use Undo to restore your previous code.');
+    } catch (error) { setError(error instanceof Error ? error.message : 'This correction could not be applied.'); }
+    finally { setBusy(false); }
+  }
+
+  async function exportCode() {
+    setExporting(true); setError('');
+    try { download(await api.export(project.code, project.name), 'form-interface.zip'); notify('Your HTML and CSS export is ready.'); }
+    catch (error) { setError(error instanceof Error ? error.message : 'Export failed. Check the server connection.'); }
+    finally { setExporting(false); }
+  }
+
+  function openProject(item: Project) {
+    if (busy) { notify('Finish or cancel the current conversion before switching workspaces.'); return; }
+    if (touched.current && current.current.id !== item.id) void saveProject(current.current).catch(() => notify('The previous workspace could not be saved.'));
+    touched.current = true; file.current = null; setProject(item); setSelected(null); setHistory([]); setView(item.code.html ? 'preview' : 'source');
+    setError(''); setDialog(null); setMobileMenu(false);
+  }
+
+  async function backupWorkspace() {
+    download(new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }), 'form-workspace.json');
+    notify('Workspace backup downloaded. Keep it with your source screenshot.');
+  }
+
+  async function importWorkspace(input: File) {
+    if (busy) return;
+    try {
+      if (input.size > 13_000_000) throw new Error('This workspace backup is too large.');
+      const restored: unknown = JSON.parse(await input.text());
+      if (!isProject(restored)) throw new Error('This is not a valid FORM workspace backup.');
+      openProject({ ...restored, id: crypto.randomUUID(), updated: Date.now() });
+      notify('Workspace imported. Your original saved copies are unchanged.');
+    } catch (error) { setError(error instanceof Error ? error.message : 'This workspace backup could not be read.'); }
+  }
+
+  const fallbackDoc = useMemo(() => localDocument(project.code), [project.code]);
+  const confidenceValues = project.result.elements.flatMap(element => element.confidence === null ? [] : [element.confidence]);
+  const confidence = confidenceValues.length ? Math.round(confidenceValues.reduce((a, b) => a + b, 0) / confidenceValues.length) : null;
+  const activeStage = job ? stages.indexOf(job.status) : -1;
+  const preview = previewDoc || fallbackDoc;
+
+  return <div className={`app-shell ${mobileMenu ? 'menu-open' : ''}`}
+    onDragOver={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDragging(true); } }}
+    onDragLeave={event => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragging(false); }}
+    onDrop={event => { event.preventDefault(); setDragging(false); if (event.dataTransfer.files.length) void upload(event.dataTransfer.files[0]); }}>
+    <a className="skip-link" href="#main-workspace">Skip to workspace</a>
+    <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" className="hidden-input" aria-label="Upload screenshot"
+      onChange={event => { const image = event.target.files?.[0]; if (image) void upload(image); event.target.value = ''; }} />
+    <input ref={workspaceInput} type="file" accept="application/json,.json" className="hidden-input" aria-label="Import workspace backup"
+      onChange={event => { const input = event.target.files?.[0]; if (input) void importWorkspace(input); event.target.value = ''; }} />
+    {mobileMenu ? <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setMobileMenu(false)} /> : null}
+    <aside className="sidebar" aria-label="Main navigation">
+      <button className="brand-lockup" onClick={() => openProject(sampleProject())} aria-label="FORM home"><span className="brand-mark"><Command size={22} /></span><span>form<span className="brand-period">.</span></span><span className="brand-beta">STUDIO</span></button>
+      <div className="workspace-switch"><span className="workspace-avatar">AC</span><div><strong>Creative workspace</strong><span>Vision → code</span></div></div>
+      <span className="nav-section">WORKSPACE</span>
+      <nav className="main-nav"><button className="active" onClick={() => { setDialog(null); setMobileMenu(false); }}><Grid2X2 size={18} />Design studio<span className="nav-current" /></button>
+        <button onClick={() => setDialog('projects')}><FolderOpen size={18} />My workspaces<span className="nav-count">{saved.length}</span></button>
+        <button onClick={() => setDialog('guide')}><BookOpen size={18} />Quick guide<ArrowUpRight size={13} /></button></nav>
+      <div className="recent-heading"><span className="nav-section">RECENT</span><button aria-label="Upload a new screenshot" onClick={() => fileInput.current?.click()}><Plus size={15} /></button></div>
+      <div className="recent-projects">{saved.length ? saved.slice(0, 4).map(item => <button className={item.id === project.id ? 'current' : ''} key={item.id} onClick={() => openProject(item)}><FileImage size={14} /><span>{item.name}</span></button>)
+        : <button className="current" onClick={() => openProject(sampleProject())}><FileImage size={14} /><span>Orbit — sample workspace</span></button>}</div>
+      <div className="sidebar-spacer" />
+      <div className="sidebar-callout"><span className="callout-icon"><Sparkles size={17} /></span><h3>From pixels<br />to possibilities.</h3><p>Give your next idea<br />a head start.</p><button onClick={() => fileInput.current?.click()}>Start from a screenshot<ArrowRight size={15} /></button></div>
+      <button className="connection" onClick={() => setDialog('settings')}><span className={`status-dot ${health ? '' : 'offline'}`} /><span>{health ? 'Processing server connected' : 'Explore offline'}</span><Settings2 size={14} /></button>
+      <div className="sidebar-user"><span className="user-avatar">AC</span><div><strong>Anis Chelli</strong><span>Personal workspace</span></div><button aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} theme`} title="Change theme" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}</button></div>
+    </aside>
+
+    <main className="main" id="main-workspace">
+      <header className="topbar"><div className="breadcrumb"><button className="menu-toggle" aria-label="Open navigation" onClick={() => setMobileMenu(true)}><Menu size={19} /></button><span>Workspace</span><ChevronRight size={13} /><strong>Design studio</strong></div>
+        <div className="topbar-right"><span className="local-pill"><ShieldCheck size={13} />Local-first</span><button className="icon-button" aria-label="Connection settings" onClick={() => setDialog('settings')}><Settings2 size={17} /></button></div></header>
+      <div className="main-content">
+        <section className="intro"><div><div className="eyebrow"><span />VISION TO CODE, WITHOUT THE GUESSWORK</div><h1>Make pixels programmable<span>.</span></h1><p>Your screenshot, transformed into a starting point you can actually build on.</p></div>
+          <button className="button upload-button" onClick={() => fileInput.current?.click()} disabled={busy}><Plus size={17} />New screenshot</button></section>
+        <div className="workflow-strip"><span><span className="step-bubble">1</span>Bring a screenshot</span><ChevronRight size={13} /><span><span className="step-bubble">2</span>Understand the structure</span><ChevronRight size={13} /><span><span className="step-bubble">3</span>Make it your own</span><span className="workflow-hint">Thoughtful tools. Better starting points.</span></div>
+
+        <section className="project-bar" aria-label="Current workspace"><div className="project-title"><span className="project-file-icon"><FileImage size={19} /></span><div><input aria-label="Workspace name" value={project.name} maxLength={80} disabled={busy}
+          onChange={event => { touched.current = true; setProject(value => ({ ...value, name: event.target.value, updated: Date.now() })); }} /><span><span className="save-dot" />{saveStatus}{project.sample ? <span className="sample-badge">SAMPLE</span> : null}</span></div></div>
+          <div className="project-actions"><button className="icon-button" aria-label="Undo last reconstruction change" disabled={!history.length || busy} onClick={() => { const previous = history.at(-1); if (previous) { changeCode(previous); setHistory(value => value.slice(0, -1)); notify('Previous code restored.'); } }} title="Undo"><Undo2 size={17} /></button>
+            <button className="button subtle" disabled={!project.code.html || exporting || busy} onClick={() => void exportCode()}>{exporting ? <Loader2 className="spinning" size={15} /> : <ArrowDownToLine size={15} />}Export code</button></div></section>
+
+        {error ? <div className="error-banner" role="alert"><CircleAlert size={18} /><span>{error}</span><button aria-label="Dismiss error" onClick={() => setError('')}><X size={16} /></button></div> : null}
+
+        <div className="studio-grid"><div className="workspace-column">
+          <Canvas project={project} document={preview} selected={selected} onSelect={setSelected} view={view} onView={setView}
+            device={device} onDevice={setDevice} overlay={overlay} onOverlay={() => setOverlay(value => !value)}>
+            <Editor code={project.code} disabled={busy} onChange={changeCode} onReset={() => { setHistory(items => [...items.slice(-11), project.code]); changeCode({ ...project.baseline }); notify('Generated code restored.'); }} notify={notify} />
+          </Canvas>
+          <div className="generation-bar"><div className="engine-choice"><span className="engine-icon"><Zap size={17} /></span><label><span>RECONSTRUCTION ENGINE</span><select aria-label="Reconstruction engine" value={engine} disabled={busy} onChange={event => setEngine(event.target.value as Engine)}><option value="local">Local vision + OCR</option><option value="ollama" disabled={!engines?.ollama}>{engines?.ollama ? `Vision model · ${engines.model}` : 'Vision model · connect Ollama'}</option></select></label></div>
+            {health && !engines ? <button className="button generate-button" onClick={() => setDialog('settings')}><Settings2 size={16} />Connect processing<ArrowRight size={16} /></button>
+              : <button className="button generate-button" disabled={!project.source || busy || !health || (engine === 'local' && !engines?.local)} onClick={() => void generate()}><Sparkles size={16} />Generate interface<ArrowUpRight size={16} /></button>}</div>
+          {job ? <div className="progress-panel" role="status" aria-live="polite"><div><Loader2 size={17} className="spinning" /><strong>{stageLabels[job.status] || 'Processing screenshot'}</strong><button onClick={cancel}>Cancel</button></div><div className="progress-track"><span style={{ width: `${job.progress}%` }} /></div><div className="progress-stages">{['Prepare', 'Detect', 'Generate', 'Review'].map((label, i) => <span key={label} className={activeStage >= i + 1 ? 'done' : ''}>{label}</span>)}</div></div> : null}
+          <div className="metric-row"><div><span className="metric-icon"><Grid2X2 size={15} /></span><span>Elements<strong>{project.result.elements.length}<small>{project.sample ? 'example layers' : 'detected'}</small></strong></span></div>
+            <div><span className="metric-icon"><TypeConfidence /></span><span>OCR confidence<strong>{confidence !== null ? `${confidence}%` : '—'}<small>{confidence !== null ? 'mean text confidence' : 'no OCR run'}</small></strong></span></div>
+            <div><span className="metric-icon"><Zap size={15} /></span><span>Processing time<strong>{project.result.duration_ms ? `${(project.result.duration_ms / 1000).toFixed(1)}s` : '—'}<small>{project.result.duration_ms ? project.result.engine === 'local' ? 'local reconstruction' : 'vision model' : 'not measured'}</small></strong></span></div></div>
+          {project.result.warnings.length && !project.sample ? <details className="warnings"><summary><CircleAlert size={14} />Review notes<span>{project.result.warnings.length}</span></summary><ul>{project.result.warnings.map(note => <li key={note}>{note}</li>)}</ul></details> : null}
+        </div><Inspector project={project} selected={selected} onSelect={id => { setSelected(id); if (project.source) setView('source'); }} onApply={apply} busy={busy} /></div>
+        <footer className="main-footer"><span>FORM STUDIO <span>© {new Date().getFullYear()}</span></span><span><span className="status-dot" />{previewStatus}<span className="footer-dot">·</span>Built from the VERMEG experiment</span></footer>
+      </div>
+    </main>
+
+    {dragging ? <div className="drag-overlay"><ImagePlus size={42} /><h2>Drop your next idea here.</h2><p>PNG, JPEG, or WebP · up to 8 MB</p></div> : null}
+    {toast ? <div className="toast" role="status"><Check size={17} /><span>{toast}</span>{removedProject ? <button onClick={() => {
+      void saveProject(removedProject).then(() => { setSaved(items => [removedProject, ...items.filter(item => item.id !== removedProject.id)]); setRemovedProject(null); notify('Workspace restored.'); }).catch(error => notify(error.message));
+    }}>Undo</button> : null}<button aria-label="Dismiss notification" onClick={() => setToast('')}><X size={14} /></button></div> : null}
+    {dialog === 'guide' ? <Dialog title="A better starting point, in three steps." onClose={() => setDialog(null)}><div className="guide-content">
+      <div><span>01</span><h3>Bring your screenshot.</h3><p>Upload, drop, or paste a PNG, JPEG, or WebP. Clear text and uncropped controls work best.</p></div>
+      <div><span>02</span><h3>Generate. Then look closely.</h3><p>Local reconstruction reads text and estimates rows. Optional Ollama vision can interpret more complex layouts. Inspect low-confidence text and correct component types.</p></div>
+      <div><span>03</span><h3>Make it your own.</h3><p>Edit HTML and CSS, test three viewport widths, and export an inert standalone page. Generated interfaces are starting points that need your review.</p></div>
+      <div className="guide-shortcuts"><kbd>⌘ / Ctrl + O</kbd>Upload<kbd>/</kbd>Find a layer<kbd>Paste</kbd>Image from clipboard</div>
+      <button className="button generate-button" onClick={() => { setDialog(null); fileInput.current?.click(); }}><Upload size={16} />Bring a screenshot</button></div></Dialog> : null}
+    {dialog === 'projects' ? <Dialog title="Your workspaces" onClose={() => setDialog(null)}><div className="projects-dialog"><p className="dialog-description">Saved in this browser. Export a backup to keep work outside this device.</p>
+      {saved.length ? saved.map(item => <div className="saved-project" key={item.id}><button onClick={() => openProject(item)}><FileImage size={21} /><span><strong>{item.name || 'Untitled workspace'}</strong><small>{new Date(item.updated).toLocaleDateString()} · {item.result.elements.length} elements</small></span><ArrowUpRight size={16} /></button>
+        <button className="icon-button" title="Remove saved copy; open workspace stays available" aria-label={`Remove saved copy of ${item.name}`} onClick={() => {
+          void forgetProject(item.id).then(() => { setRemovedProject(item); setSaved(values => values.filter(value => value.id !== item.id)); notify('Saved copy removed. You can undo this removal.'); }).catch(error => notify(error.message));
+        }}><Trash2 size={16} /></button></div>) : <div className="projects-empty"><FolderOpen size={30} /><h3>A clean slate.</h3><p>Upload your first screenshot and your workspace will save here.</p></div>}
+      <div className="backup-actions"><button className="button subtle" onClick={() => void backupWorkspace()}><ArrowDownToLine size={15} />Back up current workspace</button>
+        <button className="button subtle" disabled={busy} onClick={() => workspaceInput.current?.click()}><Upload size={15} />Import backup</button></div></div></Dialog> : null}
+    {dialog === 'settings' ? <Dialog title="Your processing connection" onClose={() => setDialog(null)}><div className="settings-content"><p className="dialog-description">Screenshots are processed by your configured Python server. Workspaces stay in this browser.</p>
+      <div className="connection-status"><span className={`status-dot ${health ? '' : 'offline'}`} /><strong>{health ? `Server connected · v${health.version}` : 'Processing server unavailable'}</strong></div>
+      <label className="field-label">Server access key<input type="password" autoComplete="off" value={keyInput} placeholder={health?.access_key_required ? 'Enter the configured server key' : 'Optional for a local server'} onChange={event => setKeyInput(event.target.value)} /></label>
+      <p className="field-note">Held in memory for this session. It is never saved with your workspace.</p>
+      <button className="button generate-button" onClick={() => { setAccessKey(keyInput); void connect().then(ok => { notify(ok ? 'Processing connection refreshed.' : 'The server or key could not be verified.'); if (ok) setDialog(null); }); }}>Save and test connection<ArrowRight size={15} /></button>
+      <div className="engine-status"><div><span>Local OCR</span><strong>{engines?.local ? 'Available' : 'Unavailable'}</strong></div><div><span>Ollama vision</span><strong>{engines?.ollama ? engines.model : 'Not connected'}</strong></div></div>
+      <p className="field-note">To use the vision model, start Ollama and install the model configured on the server. No paid API is needed.</p></div></Dialog> : null}
+  </div>;
+}
+
+function TypeConfidence() { return <ShieldCheck size={15} />; }
