@@ -9,8 +9,8 @@ A local-first studio built from Anis Chelli’s VERMEG UI-to-HTML/CSS prototype.
 - Source overlays, low-confidence filtering, element search, and editable text/type/colors.
 - Responsive row/grid reconstruction, HTML/CSS editing, source/preview comparison, and three preview widths.
 - Optional Ollama vision generation with structured responses and server-side sanitation.
-- IndexedDB workspaces, automatic saving, JSON backup/import, and reconstruction undo.
-- Light/dark themes, keyboard shortcuts, focus states, modal focus management, and reduced-motion support.
+- IndexedDB workspaces, automatic saving, validated JSON backup/import, and undo that restores code and inspector state together.
+- Light/dark themes, keyboard shortcuts, arrow-key tabs, focus states, modal focus management, and reduced-motion support.
 - Sanitized ZIP export; no scripts or remote assets in exported documents.
 
 The Orbit workspace is an explicitly labelled editable example. Its OCR confidence and processing time are not fabricated. Local reconstruction is heuristic: it does not recover an application’s business logic, original fonts, images, or interactions. OCR confidence measures text recognition, not screenshot fidelity. Vision-generated code also needs review.
@@ -72,14 +72,31 @@ pip install 'pytest>=8,<10' 'ruff>=0.11,<1'
 pytest -q
 ruff check studio tests config.py main.py element_detector.py image_processor.py html_generator.py
 npm --prefix web run build
+npm --prefix web test
 npm --prefix web audit
 ```
 
-Tests cover actual OCR on a synthetic screenshot, image bounds, malformed input, HTML escaping, hostile HTML/CSS, provider contracts, API authorization/origin checks, reconstruction/export, queue saturation, and cancellation. GitHub Actions runs Python and frontend checks. See [verification notes](docs/VERIFICATION.md) for actual results and limits.
+Tests cover actual OCR on a synthetic screenshot, image bounds, malformed input, HTML escaping, hostile HTML/CSS, provider contracts, API authorization/origin checks, reconstruction/export, queue saturation, cancellation, workspace backups, and IndexedDB persistence. GitHub Actions also builds the production Docker image and exercises the studio with Chromium. See [verification notes](docs/VERIFICATION.md) for actual results and limits.
+
+For a local browser regression run, activate the Python environment, build the frontend, then run:
+
+```bash
+cd web
+npx playwright install chromium
+npm run test:e2e
+```
+
+The runner starts the Python service automatically. To test an existing service, set `FORM_TEST_BASE_URL` and `FORM_TEST_KEY` to its URL and operator key. CI uses a synthetic screenshot and an explicitly test-only key. Screenshots and failure traces are retained as the `studio-browser-evidence` artifact. See [testing guide](docs/TESTING.md).
 
 ## Deployment and scale
 
-The Dockerfile builds the frontend and runs the Python service as an unprivileged user. Build with `docker build -t form-studio .`; set `FORM_API_KEY` and run it with a port bound to localhost. Docker, public hosting, and production load tests were not executed during this upgrade.
+The Dockerfile builds the frontend and runs the Python service as an unprivileged user. Build with `docker build -t form-studio .`; set `FORM_API_KEY` and run it with a port bound to localhost. Docker build and startup are checked in CI; public hosting and production load remain unverified.
+
+```bash
+docker build -t form-studio .
+# Set FORM_API_KEY in your terminal to your own strong operator key first.
+docker run --rm -p 127.0.0.1:8000:8000 --env FORM_API_KEY form-studio
+```
 
 This is a **single-process studio**, not a service proven for millions of users. Do not add multiple Uvicorn workers: jobs live in process memory. A public product needs per-user identity/authorization, a shared durable queue, isolated workers, persistent storage with retention controls, distributed rate limiting, monitoring, and measured load tests. See [architecture](docs/ARCHITECTURE.md).
 

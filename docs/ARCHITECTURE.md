@@ -16,8 +16,11 @@ The detector had an unclosed parenthesis and undefined detection constants. Conf
 | `studio/security.py` | HTML allowlists, parsed CSS filtering, standalone document and ZIP export |
 | `studio/jobs.py` | Bounded worker pool, expiring job capabilities, cancellation |
 | `studio/api.py` | Same-origin API, operator-key access, body limits, static frontend |
-| `web/src/components` | Canvas, editor, inspector, and accessible modal boundaries |
-| `web/src/storage.ts` | Versioned browser workspaces and imported-backup validation |
+| `web/src/components` | Canvas, editor, inspector, shared keyboard tabs, and accessible modal boundaries |
+| `web/src/hooks/useWorkspace.ts` | Autosave, workspace switching, deletion/recovery, and consistent reconstruction undo |
+| `web/src/hooks/usePreview.ts` | Debounced, cancellable previews tied to the current code |
+| `web/src/workspace.ts` | Typed backup validation and reconstruction snapshots |
+| `web/src/storage.ts` | Versioned IndexedDB persistence |
 
 The CLI and API share the conversion pipeline. Uploaded data is handled in memory and discarded when processing finishes. Browser projects are independent from expiring server jobs; they can be backed up and imported. Source text is treated as untrusted data in both heuristic and model generation.
 
@@ -33,4 +36,4 @@ For a public service: introduce an identity provider and object-level authorizat
 
 ## Evidence limits
 
-The source and pipeline were directly inspected and exercised. The cloud browser could not access the local preview (`ERR_BLOCKED_BY_CLIENT`). Therefore, no rendered UI audit, mobile browser walkthrough, or full accessibility compliance claim is made. Docker and live model generation remain unverified. Deployment preparation does not constitute deployment.
+The source and pipeline were directly inspected and exercised. Repository CI builds and starts the unprivileged Docker image and runs Chromium against that production service. Its browser suite covers source upload, real OCR, element correction/undo, editing, persistence, backup/import, offline states, ZIP download, keyboard tabs, and a mobile viewport. Screenshots and traces provide reviewable evidence; actual run status is recorded in [verification notes](VERIFICATION.md). Live model generation, physical mobile devices, full accessibility compliance, and production scale remain outside the measured evidence. Deployment preparation does not constitute deployment.
